@@ -418,6 +418,49 @@ describe("composerDraftStore image edits", () => {
       expect(
         hydrated.draftsByThreadKey[scopedThreadKey(threadRef)]?.images.map((image) => image.id),
       ).toEqual(["previous", "edited"]);
+      budget = JSON.stringify(saved).length + 20;
+      const prompt = "Keep my new instructions ".repeat(5);
+      store.setPrompt(threadRef, prompt);
+      await vi.advanceTimersByTimeAsync(300);
+      saved = JSON.parse((await memory.getItem(COMPOSER_DRAFT_STORAGE_KEY))!);
+      expect(saved.state.draftsByThreadKey[scopedThreadKey(threadRef)].prompt).toBe(prompt);
+      expect(
+        saved.state.draftsByThreadKey[scopedThreadKey(otherThread)].attachments[0].imageEditor,
+      ).toBeUndefined();
+      expect(saved.state.draftsByThreadKey[scopedThreadKey(threadRef)].attachments).toHaveLength(2);
+
+      store.replaceImage(threadRef, edited.id, {
+        ...edited,
+        file: new File(["larger replacement"], edited.name),
+        previewUrl: "blob:replacement",
+      });
+      // Serialization may finish after the draft's deferred write.
+      await vi.advanceTimersByTimeAsync(300);
+      saved = JSON.parse((await memory.getItem(COMPOSER_DRAFT_STORAGE_KEY))!);
+      expect(saved.state.draftsByThreadKey[scopedThreadKey(threadRef)].attachments[1].dataUrl).toBe(
+        persistedEdited.dataUrl,
+      );
+      await store.syncPersistedAttachments(threadRef, [
+        persistedPrevious,
+        { ...persistedEdited, dataUrl: `data:image/png;base64,${"B".repeat(4000)}` },
+      ]);
+      await vi.advanceTimersByTimeAsync(300);
+      saved = JSON.parse((await memory.getItem(COMPOSER_DRAFT_STORAGE_KEY))!);
+      expect(
+        saved.state.draftsByThreadKey[scopedThreadKey(threadRef)].attachments[1],
+      ).toMatchObject({
+        dataUrl: persistedEdited.dataUrl,
+        imageEditRequest: persistedEdited.imageEditRequest,
+      });
+      expect(store.getComposerDraft(threadRef)?.nonPersistedImageIds).toContain(edited.id);
+      store.removeImage(threadRef, edited.id);
+      await vi.advanceTimersByTimeAsync(300);
+      saved = JSON.parse((await memory.getItem(COMPOSER_DRAFT_STORAGE_KEY))!);
+      expect(
+        saved.state.draftsByThreadKey[scopedThreadKey(threadRef)].attachments.map(
+          (image: { id: string }) => image.id,
+        ),
+      ).toEqual(["previous"]);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -464,6 +507,14 @@ describe("composerDraftStore image edits", () => {
     expect(updated.images[0]?.file).toBe(replacement.file);
     expect(updated.persistedAttachments).toEqual([]);
     expect(revoke).toHaveBeenCalledExactlyOnceWith("blob:previous");
+    store.addImages(threadRef, [{ ...replacement, id: "shared", name: "shared.png" }], {
+      allowDuplicates: true,
+    });
+    revoke.mockClear();
+    store.replaceImage(threadRef, previous.id, { ...replacement, previewUrl: "blob:third" });
+    expect(revoke).not.toHaveBeenCalled();
+    store.removeImage(threadRef, "shared");
+    expect(revoke).toHaveBeenCalledExactlyOnceWith("blob:edited");
   });
 
   it("hydrates editable sessions through JSON while corrupt optional metadata does not discard the edited PNG", async () => {

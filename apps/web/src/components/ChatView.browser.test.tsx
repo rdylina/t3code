@@ -185,349 +185,398 @@ it("keeps the draft intact when image edits exceed reserved attachment slots and
   expect(accepted.images.length + accepted.files.length + countPreparingComposerImages(key)).toBe(
     PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   );
+  const originalId = accepted.images[0]!.id;
+  await act(() =>
+    openExpandedImagePreview(key, buildExpandedImagePreview(accepted.images, originalId)!),
+  );
+  await userEvent.click(page.getByRole("button", { name: "Edit image", exact: true }));
+  await expect.element(page.getByRole("textbox", { name: "Edit instructions" })).toBeEnabled();
+  await act(() => store.removeImage(target, originalId));
+  await userEvent.fill(
+    page.getByRole("textbox", { name: "Edit instructions" }),
+    "Do not resurrect a removed image",
+  );
+  await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent(
+      "The original attachment changed while preparing the image. Reopen it and try again.",
+    );
+  expect(store.getComposerDraft(target)?.images.map((image) => image.id)).toEqual([
+    accepted.images[1]!.id,
+  ]);
+  expect(store.getComposerDraft(target)?.prompt).toBe(accepted.prompt);
 });
 
-it("replaces a staged image request and removes its old mask and unchanged instructions when the guidance is edited again", async () => {
-  const style = document.createElement("style");
-  style.textContent = appStyles;
-  document.head.append(style);
-  using _style = { [Symbol.dispose]: () => style.remove() };
-  const thread = threadWithHistory("restage-image-edit", 1);
-  using _environment = installFakeEnvironment([thread]);
-  __setClientSettingsForTests({
-    ...DEFAULT_CLIENT_SETTINGS,
-    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-  });
-  const target = scopeThreadRef(ENVIRONMENT_ID, thread.id);
-  const key = scopedThreadKey(target);
-  const store = useComposerDraftStore.getState();
-  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
-  const file = new File([PNG, new Uint8Array(1_300_000)], "robot.png", { type: "image/png" });
-  store.addImage(target, {
-    type: "image",
-    id: "restage-original",
-    name: file.name,
-    mimeType: file.type,
-    sizeBytes: file.size,
-    file,
-    previewUrl: URL.createObjectURL(file),
-    imageEditor: {
-      originalFile: file,
-      document: addImageEditorObject(createImageEditorDocument(1, 1), {
-        id: "remove",
-        kind: "remove",
-        x: 0,
-        y: 0,
-        width: 1,
-        height: 1,
-        rotation: 0,
-        color: "#ff0000",
-        strokeWidth: 1,
-        points: [{ x: 0, y: 0 }],
-      }),
-    },
-  });
-  const inlineReference = formatInlineContextReference(
-    imageContextReference(store.getComposerDraft(target)!.images[0]!),
-  );
-  store.setPrompt(target, `Keep my introduction ${inlineReference}`);
-  const router = getRouter(
-    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
-  );
-  await router.load();
-  await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    router: false,
-  });
-  using _uploads = acceptAttachmentUploads();
-  const open = async (id: string, still = false) => {
-    const preview = buildExpandedImagePreview(store.getComposerDraft(target)!.images, id)!;
-    await act(() => openExpandedImagePreview(key, preview));
-    await userEvent.click(page.getByRole("button", { name: "Edit image", exact: true }));
-    if (!still)
-      await expect.element(page.getByRole("textbox", { name: "Edit instructions" })).toBeEnabled();
-  };
-  await open("restage-original");
-  await userEvent.fill(
-    page.getByRole("textbox", { name: "Edit instructions" }),
-    "Remove the old mark",
-  );
-  await userEvent.click(page.getByRole("button", { name: "Remove background", exact: true }));
-  await userEvent.click(page.getByRole("combobox", { name: "Regenerate aspect ratio" }));
-  await userEvent.click(page.getByRole("option", { name: "Portrait · 4:5" }));
-  await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
-  await vi.waitFor(() => expect(store.getComposerDraft(target)?.images).toHaveLength(3));
-  let first = store.getComposerDraft(target)!;
-  expect(first.prompt).toContain(inlineReference);
-  expect(first.images.map((image) => image.name)).toEqual([
-    "robot-original.png",
-    "robot-guidance.png",
-    "robot-mask.png",
-  ]);
-  let guidance = first.images.find((image) => image.imageEditor)!;
-  expect(guidance.imageEditRequest?.imageIds).toEqual(first.images.map((image) => image.id));
-  const originalPrompt = first.prompt;
-  await open(guidance.id);
-  await expect
-    .element(page.getByRole("textbox", { name: "Edit instructions" }))
-    .toHaveValue("Remove the old mark");
-  await expect
-    .element(page.getByRole("button", { name: "Remove background", exact: true }))
-    .toHaveAttribute("aria-pressed", "true");
-  await expect
-    .element(page.getByRole("combobox", { name: "Regenerate aspect ratio" }))
-    .toHaveTextContent("Portrait · 4:5");
-  await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
-  await vi.waitFor(() =>
-    expect(store.getComposerDraft(target)?.images.some((image) => image.id === guidance.id)).toBe(
-      false,
-    ),
-  );
-  first = store.getComposerDraft(target)!;
-  guidance = first.images.find((image) => image.imageEditor)!;
-  expect(first.prompt).toBe(originalPrompt);
-  expect(first.images).toHaveLength(3);
-  const persisted = await serializeComposerImages(first.images, []);
-  expect(persisted.find((image) => image.id === guidance.id)?.imageEditor).toBeUndefined();
-  const hydrated = hydrateImagesFromPersisted(persisted);
-  const recovered = hydrated.find((image) => image.id === guidance.id)!;
-  expect(recovered.imageEditor?.originalFile.name).toBe("robot.png");
-  expect(await recovered.imageEditor!.originalFile.arrayBuffer()).toEqual(
-    await first.images[0]!.file.arrayBuffer(),
-  );
-  await act(() => {
-    for (const image of hydrated) store.replaceImage(target, image.id, image);
-  });
-  await open(guidance.id);
-  await expect
-    .element(page.getByRole("textbox", { name: "Edit instructions" }))
-    .toHaveValue("Remove the old mark");
-  await expect
-    .element(page.getByRole("button", { name: "Remove background", exact: true }))
-    .toHaveAttribute("aria-pressed", "true");
-  await expect
-    .element(page.getByRole("combobox", { name: "Regenerate aspect ratio" }))
-    .toHaveTextContent("Portrait · 4:5");
-  await userEvent.click(page.getByRole("button", { name: "Remove background", exact: true }));
-  await userEvent.click(page.getByRole("combobox", { name: "Regenerate aspect ratio" }));
-  await userEvent.click(page.getByRole("option", { name: "Original", exact: true }));
-  await userEvent.click(
-    page.getByRole("button", { name: "Revert Removal selection", exact: true }),
-  );
-  await userEvent.fill(
-    page.getByRole("textbox", { name: "Edit instructions" }),
-    "Make the background blue",
-  );
-  await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
-  await vi.waitFor(() => expect(store.getComposerDraft(target)?.images).toHaveLength(2));
-  const restaged = store.getComposerDraft(target)!;
-  expect(restaged.images.map((image) => image.name)).toEqual([
-    "robot-original.png",
-    "robot-guidance.png",
-  ]);
-  expect(restaged.prompt).toContain("Keep my introduction");
-  expect(restaged.prompt).toContain(inlineReference);
-  expect(restaged.images[0]?.id).toBe("restage-original");
-  expect(restaged.prompt).toContain("Make the background blue");
-  expect(restaged.prompt).not.toContain("Remove the old mark");
-  expect(restaged.prompt).not.toContain("Remove the areas painted red");
-  expect(restaged.prompt.match(/Edit the attached original image/g)).toHaveLength(1);
-  const stagedGuidance = restaged.images.find((image) => image.imageEditor)!;
-  const gif = new File(
-    [
-      Uint8Array.from(atob("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"), (char) =>
-        char.charCodeAt(0),
-      ),
-    ],
-    "animation.gif",
-    { type: "image/gif" },
-  );
-  const animation = {
-    type: "image" as const,
-    id: "restage-animation",
-    file: gif,
-    name: gif.name,
-    mimeType: gif.type,
-    sizeBytes: gif.size,
-    previewUrl: URL.createObjectURL(gif),
-  };
-  const context = "Frame timing: frame 1 100ms; frame 2 250ms. Return the edited animation.";
-  // Restore the same metadata a staged frame-sheet request retains across a draft reload.
-  await act(() => {
-    store.addImage(target, animation);
-    store.replaceImage(target, stagedGuidance.id, {
-      ...stagedGuidance,
-      imageEditRequest: {
-        ...stagedGuidance.imageEditRequest!,
-        imageIds: [...restaged.images.map((image) => image.id), animation.id],
-        prompt: stagedGuidance.imageEditRequest!.prompt,
-        animation: { originalId: animation.id, context },
+it.each(["restoration", "animation", "shared original"] as const)(
+  "restages an image request with %s",
+  async (scenario) => {
+    const style = document.createElement("style");
+    style.textContent = appStyles;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    const thread = threadWithHistory("restage-image-edit", 1);
+    using _environment = installFakeEnvironment([thread]);
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const target = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+    const key = scopedThreadKey(target);
+    const store = useComposerDraftStore.getState();
+    using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+    const file = new File([PNG, new Uint8Array(1_300_000)], "robot.png", { type: "image/png" });
+    const attachment = {
+      type: "image" as const,
+      id: "restage-original",
+      name: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      file,
+      previewUrl: URL.createObjectURL(file),
+      imageEditor: {
+        originalFile: file,
+        document: addImageEditorObject(createImageEditorDocument(1, 1), {
+          id: "remove",
+          kind: "remove",
+          x: 0,
+          y: 0,
+          width: 1,
+          height: 1,
+          rotation: 0,
+          color: "#ff0000",
+          strokeWidth: 1,
+          points: [{ x: 0, y: 0 }],
+        }),
       },
+    };
+    if (scenario === "restoration") store.addImage(target, attachment);
+    const inlineReference = formatInlineContextReference(imageContextReference(attachment));
+    store.setPrompt(target, `Keep my introduction ${inlineReference}`);
+    const router = getRouter(
+      createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+    );
+    await router.load();
+    await using _app = await render(<AppRoot router={router} />, {
+      // AppRoot brings its own router.
+      router: false,
     });
-  });
-  await open(stagedGuidance.id);
-  await userEvent.fill(
-    page.getByRole("textbox", { name: "Edit instructions" }),
-    "Make frame two green",
-  );
-  await userEvent.click(page.getByRole("button", { name: "Remove background", exact: true }));
-  await userEvent.click(page.getByRole("combobox", { name: "Regenerate aspect ratio" }));
-  await userEvent.click(page.getByRole("option", { name: "Portrait · 4:5", exact: true }));
-  await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
-  await vi.waitFor(() =>
-    expect(store.getComposerDraft(target)?.prompt).toContain("Make frame two green"),
-  );
-  const frames = store.getComposerDraft(target)!;
-  expect(frames.images.map((image) => image.name)).toEqual([
-    "animation.gif",
-    "robot-original.png",
-    "robot-guidance.png",
-  ]);
-  expect(await frames.images[0]!.file.arrayBuffer()).toEqual(await gif.arrayBuffer());
-  expect(frames.images[0]?.id).toBe(animation.id);
-  expect(frames.prompt).toContain(context);
-  expect(frames.prompt).toContain("Make frame two green");
-  expect(frames.prompt).not.toContain("Make the background blue");
-  expect(frames.images[2]!.imageEditRequest?.animation).toEqual({
-    originalId: frames.images[0]!.id,
-    context,
-  });
-  {
-    const countBefore = store.getComposerDraft(target)!.images.length;
-    await open(animation.id, true);
-    await userEvent.click(page.getByRole("button", { name: "Edit a still frame", exact: true }));
-    await expect
-      .element(page.getByRole("button", { name: "Edit a still frame", exact: true }))
-      .not.toBeInTheDocument();
-    await expect.element(page.getByRole("textbox", { name: "Edit instructions" })).toBeEnabled();
-    await userEvent.fill(
-      page.getByRole("textbox", { name: "Edit instructions" }),
-      "Make a separate blue still",
-    );
-    await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
-    await expect
-      .element(page.getByRole("textbox", { name: "Edit instructions" }))
-      .not.toBeInTheDocument();
-    const after = store.getComposerDraft(target)!;
-    expect(after.images.find((image) => image.id === animation.id)?.file).toBe(
-      frames.images[0]!.file,
-    );
-    expect(after.images).toHaveLength(countBefore + 2);
-    expect(
-      after.images.find((image) => image.id === frames.images[2]!.id)?.imageEditRequest,
-    ).toEqual(frames.images[2]!.imageEditRequest);
-    expect(after.prompt).toContain(context);
-  }
-  {
-    const countBefore = store.getComposerDraft(target)!.images.length;
-    const originalId = "shared-original";
-    await act(() =>
-      store.addImages(
-        target,
-        [
-          {
-            type: "image",
-            id: originalId,
-            name: file.name,
-            file,
-            mimeType: file.type,
-            sizeBytes: file.size,
-            previewUrl: URL.createObjectURL(file),
-            imageEditor: guidance.imageEditor!,
-          },
-        ],
-        { allowDuplicates: true },
-      ),
-    );
-    await open(originalId);
-    await userEvent.fill(
-      page.getByRole("textbox", { name: "Edit instructions" }),
-      "First shared request",
-    );
-    await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
-    await vi.waitFor(() =>
-      expect(store.getComposerDraft(target)?.images).toHaveLength(countBefore + 3),
-    );
-    const firstShared = store
-      .getComposerDraft(target)!
-      .images.find((image) => image.imageEditRequest?.imageIds.includes(originalId))!;
-    const firstOriginal = store
-      .getComposerDraft(target)!
-      .images.find((image) => image.id === originalId)!;
-    await expect
-      .element(page.getByRole("textbox", { name: "Edit instructions" }))
-      .not.toBeInTheDocument();
-    await vi.waitFor(() =>
-      expect(store.getComposerDraft(target)?.prompt).toContain(
-        firstShared.imageEditRequest!.prompt,
-      ),
-    );
-    await open(originalId);
-    await userEvent.fill(
-      page.getByRole("textbox", { name: "Edit instructions" }),
-      "Second shared request",
-    );
-    await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
-    await vi.waitFor(() =>
-      expect(store.getComposerDraft(target)?.images).toHaveLength(countBefore + 5),
-    );
-    const staged = store.getComposerDraft(target)!;
-    const second = staged.images.find((image) =>
-      image.imageEditRequest?.prompt.includes("Second shared request"),
-    )!;
-    await expect
-      .element(page.getByRole("textbox", { name: "Edit instructions" }))
-      .not.toBeInTheDocument();
-    const secondOriginalId = second.imageEditRequest!.editor!.originalId;
-    expect(secondOriginalId).not.toBe(originalId);
-    expect(staged.images.find((image) => image.id === originalId)?.file).toBe(firstOriginal.file);
-    await vi.waitFor(() => {
-      expect(store.getComposerDraft(target)?.prompt).toContain(
-        firstShared.imageEditRequest!.prompt,
+    using _uploads = acceptAttachmentUploads();
+    const open = async (id: string, still = false) => {
+      const preview = buildExpandedImagePreview(store.getComposerDraft(target)!.images, id)!;
+      await act(() => openExpandedImagePreview(key, preview));
+      await userEvent.click(page.getByRole("button", { name: "Edit image", exact: true }));
+      if (!still)
+        await expect
+          .element(page.getByRole("textbox", { name: "Edit instructions" }))
+          .toBeEnabled();
+    };
+    if (scenario === "restoration") {
+      await open("restage-original");
+      await userEvent.fill(
+        page.getByRole("textbox", { name: "Edit instructions" }),
+        "Remove the old mark",
       );
-      expect(store.getComposerDraft(target)?.prompt).toContain(second.imageEditRequest!.prompt);
-    });
-    // Older saved drafts can still have two requests sharing the same clean companion.
-    await act(() => {
-      store.replaceImage(target, second.id, {
-        ...second,
-        imageEditRequest: {
-          ...second.imageEditRequest!,
-          imageIds: second.imageEditRequest!.imageIds.map((id) =>
-            id === secondOriginalId ? originalId : id,
-          ),
-          editor: { ...second.imageEditRequest!.editor!, originalId },
-        },
+      await userEvent.click(page.getByRole("button", { name: "Remove background", exact: true }));
+      await userEvent.click(page.getByRole("combobox", { name: "Regenerate aspect ratio" }));
+      await userEvent.click(page.getByRole("option", { name: "Portrait · 4:5" }));
+      await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
+      await vi.waitFor(() => expect(store.getComposerDraft(target)?.images).toHaveLength(3));
+      let first = store.getComposerDraft(target)!;
+      expect(first.prompt).toContain(inlineReference);
+      expect(first.images.map((image) => image.name)).toEqual([
+        "robot-original.png",
+        "robot-guidance.png",
+        "robot-mask.png",
+      ]);
+      let guidance = first.images.find((image) => image.imageEditor)!;
+      expect(guidance.imageEditRequest?.imageIds).toEqual(first.images.map((image) => image.id));
+      const originalPrompt = first.prompt;
+      await open(guidance.id);
+      await expect
+        .element(page.getByRole("textbox", { name: "Edit instructions" }))
+        .toHaveValue("Remove the old mark");
+      await expect
+        .element(page.getByRole("button", { name: "Remove background", exact: true }))
+        .toHaveAttribute("aria-pressed", "true");
+      await expect
+        .element(page.getByRole("combobox", { name: "Regenerate aspect ratio" }))
+        .toHaveTextContent("Portrait · 4:5");
+      await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
+      await vi.waitFor(() =>
+        expect(
+          store.getComposerDraft(target)?.images.some((image) => image.id === guidance.id),
+        ).toBe(false),
+      );
+      first = store.getComposerDraft(target)!;
+      guidance = first.images.find((image) => image.imageEditor)!;
+      expect(first.prompt).toBe(originalPrompt);
+      expect(first.images).toHaveLength(3);
+      const persisted = await serializeComposerImages(first.images, []);
+      expect(persisted.find((image) => image.id === guidance.id)?.imageEditor).toBeUndefined();
+      const hydrated = hydrateImagesFromPersisted(persisted);
+      const recovered = hydrated.find((image) => image.id === guidance.id)!;
+      expect(recovered.imageEditor?.originalFile.name).toBe("robot.png");
+      expect(await recovered.imageEditor!.originalFile.arrayBuffer()).toEqual(
+        await first.images[0]!.file.arrayBuffer(),
+      );
+      await act(() => {
+        for (const image of hydrated) store.replaceImage(target, image.id, image);
       });
-      store.removeImage(target, secondOriginalId);
-    });
-    const shared = store.getComposerDraft(target)!;
-    const other = firstShared;
-    await open(second.id);
-    await userEvent.fill(
-      page.getByRole("textbox", { name: "Edit instructions" }),
-      "Refresh the second request",
-    );
-    await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
-    await expect
-      .element(page.getByRole("textbox", { name: "Edit instructions" }))
-      .not.toBeInTheDocument();
-    const after = store.getComposerDraft(target)!;
-    for (const id of other.imageEditRequest!.imageIds) {
-      const before = shared.images.find((image) => image.id === id)!;
-      expect(after.images.find((image) => image.id === id)?.file).toBe(before.file);
+      await open(guidance.id);
+      await expect
+        .element(page.getByRole("textbox", { name: "Edit instructions" }))
+        .toHaveValue("Remove the old mark");
+      await expect
+        .element(page.getByRole("button", { name: "Remove background", exact: true }))
+        .toHaveAttribute("aria-pressed", "true");
+      await expect
+        .element(page.getByRole("combobox", { name: "Regenerate aspect ratio" }))
+        .toHaveTextContent("Portrait · 4:5");
+      await userEvent.click(page.getByRole("button", { name: "Remove background", exact: true }));
+      await userEvent.click(page.getByRole("combobox", { name: "Regenerate aspect ratio" }));
+      await userEvent.click(page.getByRole("option", { name: "Original", exact: true }));
+      await userEvent.click(
+        page.getByRole("button", { name: "Revert Removal selection", exact: true }),
+      );
+      await userEvent.fill(
+        page.getByRole("textbox", { name: "Edit instructions" }),
+        "Make the background blue",
+      );
+      await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
+      await vi.waitFor(() => expect(store.getComposerDraft(target)?.images).toHaveLength(2));
+      const restaged = store.getComposerDraft(target)!;
+      expect(restaged.images.map((image) => image.name)).toEqual([
+        "robot-original.png",
+        "robot-guidance.png",
+      ]);
+      expect(restaged.prompt).toContain("Keep my introduction");
+      expect(restaged.prompt).toContain(inlineReference);
+      expect(restaged.images[0]?.id).toBe("restage-original");
+      expect(restaged.prompt).toContain("Make the background blue");
+      expect(restaged.prompt).not.toContain("Remove the old mark");
+      expect(restaged.prompt).not.toContain("Remove the areas painted red");
+      expect(restaged.prompt.match(/Edit the attached original image/g)).toHaveLength(1);
+      return;
     }
-    expect(
-      after.images.some((image) => image.id === other.imageEditRequest!.editor!.originalId),
-    ).toBe(true);
-    await vi.waitFor(() =>
-      expect(store.getComposerDraft(target)?.prompt).toContain(other.imageEditRequest!.prompt),
-    );
-    await vi.waitFor(() =>
-      expect(store.getComposerDraft(target)?.prompt).toContain("Refresh the second request"),
-    );
-  }
-});
+    if (scenario === "animation") {
+      const { imageEditor: _session, ...cleanAttachment } = attachment;
+      const clean = { ...cleanAttachment, name: "robot-original.png" };
+      const stagedGuidance = {
+        ...attachment,
+        id: "guidance",
+        name: "robot-guidance.png",
+        imageEditor: { originalFile: file, document: createImageEditorDocument(1, 1) },
+        imageEditRequest: { imageIds: [clean.id, "guidance"], prompt: "Make the background blue" },
+      };
+      await act(() => {
+        store.addImages(target, [clean, stagedGuidance], { allowDuplicates: true });
+        store.setPrompt(target, "\nMake the background blue\n");
+      });
+      const restaged = store.getComposerDraft(target)!;
+      const gif = new File(
+        [
+          Uint8Array.from(
+            atob("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"),
+            (char) => char.charCodeAt(0),
+          ),
+        ],
+        "animation.gif",
+        { type: "image/gif" },
+      );
+      const animation = {
+        type: "image" as const,
+        id: "restage-animation",
+        file: gif,
+        name: gif.name,
+        mimeType: gif.type,
+        sizeBytes: gif.size,
+        previewUrl: URL.createObjectURL(gif),
+      };
+      const context = "Frame timing: frame 1 100ms; frame 2 250ms. Return the edited animation.";
+      // Restore the same metadata a staged frame-sheet request retains across a draft reload.
+      await act(() => {
+        store.addImage(target, animation);
+        store.replaceImage(target, stagedGuidance.id, {
+          ...stagedGuidance,
+          imageEditRequest: {
+            ...stagedGuidance.imageEditRequest!,
+            imageIds: [...restaged.images.map((image) => image.id), animation.id],
+            prompt: stagedGuidance.imageEditRequest!.prompt,
+            animation: { originalId: animation.id, context },
+          },
+        });
+      });
+      await open(stagedGuidance.id);
+      await userEvent.fill(
+        page.getByRole("textbox", { name: "Edit instructions" }),
+        "Make frame two green",
+      );
+      await userEvent.click(page.getByRole("button", { name: "Remove background", exact: true }));
+      await userEvent.click(page.getByRole("combobox", { name: "Regenerate aspect ratio" }));
+      await userEvent.click(page.getByRole("option", { name: "Portrait · 4:5", exact: true }));
+      await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
+      await vi.waitFor(() =>
+        expect(store.getComposerDraft(target)?.prompt).toContain("Make frame two green"),
+      );
+      const frames = store.getComposerDraft(target)!;
+      expect(frames.images.map((image) => image.name)).toEqual([
+        "animation.gif",
+        "robot-original.png",
+        "robot-guidance.png",
+      ]);
+      expect(await frames.images[0]!.file.arrayBuffer()).toEqual(await gif.arrayBuffer());
+      expect(frames.images[0]?.id).toBe(animation.id);
+      expect(frames.prompt).toContain(context);
+      expect(frames.prompt).toContain("Make frame two green");
+      expect(frames.prompt).not.toContain("Make the background blue");
+      expect(frames.images[2]!.imageEditRequest?.animation).toEqual({
+        originalId: frames.images[0]!.id,
+        context,
+      });
+      {
+        const countBefore = store.getComposerDraft(target)!.images.length;
+        await open(animation.id, true);
+        await userEvent.click(
+          page.getByRole("button", { name: "Edit a still frame", exact: true }),
+        );
+        await expect
+          .element(page.getByRole("button", { name: "Edit a still frame", exact: true }))
+          .not.toBeInTheDocument();
+        await expect
+          .element(page.getByRole("textbox", { name: "Edit instructions" }))
+          .toBeEnabled();
+        await userEvent.fill(
+          page.getByRole("textbox", { name: "Edit instructions" }),
+          "Make a separate blue still",
+        );
+        await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
+        await expect
+          .element(page.getByRole("textbox", { name: "Edit instructions" }))
+          .not.toBeInTheDocument();
+        const after = store.getComposerDraft(target)!;
+        expect(after.images.find((image) => image.id === animation.id)?.file).toBe(
+          frames.images[0]!.file,
+        );
+        expect(after.images).toHaveLength(countBefore + 2);
+        expect(
+          after.images.find((image) => image.id === frames.images[2]!.id)?.imageEditRequest,
+        ).toEqual(frames.images[2]!.imageEditRequest);
+        expect(after.prompt).toContain(context);
+      }
+      return;
+    }
+    {
+      const countBefore = store.getComposerDraft(target)!.images.length;
+      const originalId = "shared-original";
+      await act(() =>
+        store.addImages(
+          target,
+          [
+            {
+              type: "image",
+              id: originalId,
+              name: file.name,
+              file,
+              mimeType: file.type,
+              sizeBytes: file.size,
+              previewUrl: URL.createObjectURL(file),
+              imageEditor: attachment.imageEditor,
+            },
+          ],
+          { allowDuplicates: true },
+        ),
+      );
+      await open(originalId);
+      await userEvent.fill(
+        page.getByRole("textbox", { name: "Edit instructions" }),
+        "First shared request",
+      );
+      await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
+      await vi.waitFor(() =>
+        expect(store.getComposerDraft(target)?.images).toHaveLength(countBefore + 3),
+      );
+      const firstShared = store
+        .getComposerDraft(target)!
+        .images.find((image) => image.imageEditRequest?.imageIds.includes(originalId))!;
+      const firstOriginal = store
+        .getComposerDraft(target)!
+        .images.find((image) => image.id === originalId)!;
+      await expect
+        .element(page.getByRole("textbox", { name: "Edit instructions" }))
+        .not.toBeInTheDocument();
+      await vi.waitFor(() =>
+        expect(store.getComposerDraft(target)?.prompt).toContain(
+          firstShared.imageEditRequest!.prompt,
+        ),
+      );
+      await open(originalId);
+      await userEvent.fill(
+        page.getByRole("textbox", { name: "Edit instructions" }),
+        "Second shared request",
+      );
+      await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
+      await vi.waitFor(() =>
+        expect(store.getComposerDraft(target)?.images).toHaveLength(countBefore + 5),
+      );
+      const staged = store.getComposerDraft(target)!;
+      const second = staged.images.find((image) =>
+        image.imageEditRequest?.prompt.includes("Second shared request"),
+      )!;
+      await expect
+        .element(page.getByRole("textbox", { name: "Edit instructions" }))
+        .not.toBeInTheDocument();
+      const secondOriginalId = second.imageEditRequest!.editor!.originalId;
+      expect(secondOriginalId).not.toBe(originalId);
+      expect(staged.images.find((image) => image.id === originalId)?.file).toBe(firstOriginal.file);
+      await vi.waitFor(() => {
+        expect(store.getComposerDraft(target)?.prompt).toContain(
+          firstShared.imageEditRequest!.prompt,
+        );
+        expect(store.getComposerDraft(target)?.prompt).toContain(second.imageEditRequest!.prompt);
+      });
+      // Older saved drafts can still have two requests sharing the same clean companion.
+      await act(() => {
+        store.replaceImage(target, second.id, {
+          ...second,
+          imageEditRequest: {
+            ...second.imageEditRequest!,
+            imageIds: second.imageEditRequest!.imageIds.map((id) =>
+              id === secondOriginalId ? originalId : id,
+            ),
+            editor: { ...second.imageEditRequest!.editor!, originalId },
+          },
+        });
+        store.removeImage(target, secondOriginalId);
+      });
+      const shared = store.getComposerDraft(target)!;
+      const other = firstShared;
+      await open(second.id);
+      await userEvent.fill(
+        page.getByRole("textbox", { name: "Edit instructions" }),
+        "Refresh the second request",
+      );
+      await userEvent.click(page.getByRole("button", { name: "Add edit request", exact: true }));
+      await expect
+        .element(page.getByRole("textbox", { name: "Edit instructions" }))
+        .not.toBeInTheDocument();
+      const after = store.getComposerDraft(target)!;
+      for (const id of other.imageEditRequest!.imageIds) {
+        const before = shared.images.find((image) => image.id === id)!;
+        expect(after.images.find((image) => image.id === id)?.file).toBe(before.file);
+      }
+      expect(
+        after.images.some((image) => image.id === other.imageEditRequest!.editor!.originalId),
+      ).toBe(true);
+      await vi.waitFor(() =>
+        expect(store.getComposerDraft(target)?.prompt).toContain(other.imageEditRequest!.prompt),
+      );
+      await vi.waitFor(() =>
+        expect(store.getComposerDraft(target)?.prompt).toContain("Refresh the second request"),
+      );
+    }
+  },
+);
 
 /** Accepts every attachment upload without sending its bytes, until disposed. */
 function acceptAttachmentUploads(): Disposable {
@@ -746,67 +795,105 @@ it("opens conversation images when individual sources are unavailable", async ()
   ).toEqual([]);
 });
 
-it("leaves Images available on the new thread and drops a stale gallery load failure", async () => {
-  class GalleryReadError extends Schema.TaggedError<GalleryReadError>()("GalleryReadError", {
-    message: Schema.String,
-  }) {}
-  const style = document.createElement("style");
-  style.textContent = appStyles;
-  document.head.append(style);
-  using _style = { [Symbol.dispose]: () => style.remove() };
-  const seed = threadWithHistory("stale-image-gallery", 1);
-  const first = {
-    ...seed,
-    items: seed.items.map((item) =>
-      item.type === "assistant_message"
-        ? { ...item, text: "An image for the gallery.\n\n![image](./asset.png)" }
-        : item,
-    ),
-  };
-  const second = threadWithHistory("current-image-gallery", 1);
-  using _environment = installFakeEnvironment([first, second]);
-  __setClientSettingsForTests({
-    ...DEFAULT_CLIENT_SETTINGS,
-    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-  });
-  let finished = () => {};
-  const completion = new Promise<void>((resolve) => {
-    finished = resolve;
-  });
-  using held = holdRpc(
-    WS_METHODS.assetsCreateUrl,
-    Effect.fail(new GalleryReadError({ message: "Old image read failed" })).pipe(
-      Effect.ensuring(Effect.sync(finished)),
-    ),
-  );
-  const router = getRouter(
-    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${first.id}`] }),
-  );
-  await router.load();
-  await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    router: false,
-  });
-  using toast = vi.spyOn(toastManager, "add");
-  const images = page.getByRole("button", { name: "Conversation images", exact: true });
-  await expect.element(images).toBeEnabled();
-  await userEvent.click(images);
-  await expect.element(images).toBeDisabled();
-  await vi.waitFor(() => expect(held.calls.length).toBeGreaterThan(0));
-  await router.navigate({ to: `/${ENVIRONMENT_ID}/${second.id}` });
-  await expect.element(page.getByText("Answer 0 for current-image-gallery.")).toBeVisible();
-  await expect.element(images).toBeEnabled();
-  await act(async () => {
-    held.release();
-    await completion;
-  });
-  await userEvent.click(images);
-  await expect.element(page.getByText("No images in this conversation yet.")).toBeVisible();
-  expect(
-    toast.mock.calls.filter(([entry]) => entry.title === "Unable to open conversation images"),
-  ).toEqual([]);
-  await userEvent.click(page.getByRole("button", { name: "Back", exact: true }));
-});
+it.each(["thread", "preview"] as const)(
+  "drops a pending gallery load after opening another %s",
+  async (destination) => {
+    class GalleryReadError extends Schema.TaggedError<GalleryReadError>()("GalleryReadError", {
+      message: Schema.String,
+    }) {}
+    const style = document.createElement("style");
+    style.textContent = appStyles;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    const seed = threadWithHistory(`stale-image-gallery-${destination}`, 1);
+    const first = {
+      ...seed,
+      items: seed.items.map((item) =>
+        item.type === "assistant_message"
+          ? {
+              ...item,
+              text: "An image for the gallery.\n\n![image](./asset.png)",
+            }
+          : item,
+      ),
+    };
+    const second = threadWithHistory("current-image-gallery", 1);
+    using _environment = installFakeEnvironment([first, second]);
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    });
+    let finished = () => {};
+    const completion = new Promise<void>((resolve) => {
+      finished = resolve;
+    });
+    const url = URL.createObjectURL(new Blob([PNG], { type: "image/png" }));
+    using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(url) };
+    using _assets = answerRpc(WS_METHODS.assetsCreateUrl, () =>
+      Effect.succeed({ relativeUrl: url, expiresAt: 4_102_444_800_000 }),
+    );
+    const router = getRouter(
+      createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${first.id}`] }),
+    );
+    await router.load();
+    await using _app = await render(<AppRoot router={router} />, {
+      // AppRoot brings its own router.
+      router: false,
+    });
+    await expect
+      .element(page.getByRole("button", { name: "Preview image", exact: true }))
+      .toBeVisible();
+    const heldRead = Promise.withResolvers<void>();
+    using _release = { [Symbol.dispose]: () => heldRead.resolve() };
+    let calls = 0;
+    using _held = answerRpc(WS_METHODS.assetsCreateUrl, () => {
+      calls += 1;
+      return calls === 1
+        ? Effect.promise(() => heldRead.promise).pipe(
+            Effect.andThen(Effect.fail(new GalleryReadError({ message: "Old image read failed" }))),
+            Effect.ensuring(Effect.sync(finished)),
+          )
+        : Effect.succeed({ relativeUrl: url, expiresAt: 4_102_444_800_000 });
+    });
+    using toast = vi.spyOn(toastManager, "add");
+    const images = page.getByRole("button", { name: "Conversation images", exact: true });
+    await expect.element(images).toBeEnabled();
+    await userEvent.click(images);
+    await expect.element(images).toBeDisabled();
+    await vi.waitFor(() => expect(calls).toBeGreaterThan(0));
+    if (destination === "preview") {
+      await userEvent.click(page.getByRole("button", { name: "Preview image", exact: true }));
+      await expect
+        .element(page.getByRole("button", { name: "Edit image", exact: true }))
+        .toBeEnabled();
+    } else {
+      await router.navigate({ to: `/${ENVIRONMENT_ID}/${second.id}` });
+      await expect.element(page.getByText("Answer 0 for current-image-gallery.")).toBeVisible();
+    }
+    if (destination === "thread") await expect.element(images).toBeEnabled();
+    await act(async () => {
+      heldRead.resolve();
+      await completion;
+    });
+    if (destination === "preview") {
+      await expect
+        .element(page.getByRole("button", { name: "Edit image", exact: true }))
+        .toBeEnabled();
+      expect(
+        toast.mock.calls.filter(([entry]) => entry.title === "Unable to open conversation images"),
+      ).toEqual([]);
+      await userEvent.click(page.getByRole("button", { name: "Close image preview", exact: true }));
+      await expect.element(images).toBeEnabled();
+      return;
+    }
+    await userEvent.click(images);
+    await expect.element(page.getByText("No images in this conversation yet.")).toBeVisible();
+    expect(
+      toast.mock.calls.filter(([entry]) => entry.title === "Unable to open conversation images"),
+    ).toEqual([]);
+    await userEvent.click(page.getByRole("button", { name: "Back", exact: true }));
+  },
+);
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {

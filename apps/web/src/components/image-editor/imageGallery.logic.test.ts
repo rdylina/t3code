@@ -18,6 +18,11 @@ describe("createImageArchive", () => {
     ]);
     const archive = await JSZip.loadAsync(await blob.arrayBuffer(), { checkCRC32: true });
     expect(Object.keys(archive.files)).toEqual(["café.png", "CAFÉ (2).png", "image-3"]);
+    expect(Object.values(archive.files).map((entry) => entry.unsafeOriginalName)).toEqual([
+      "café.png",
+      "CAFÉ (2).png",
+      "image-3",
+    ]);
     expect(await archive.file("café.png")?.async("uint8array")).toEqual(bytes);
     expect(await archive.file("CAFÉ (2).png")?.async("uint8array")).toEqual(
       new Uint8Array([0, 255]),

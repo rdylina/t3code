@@ -2871,6 +2871,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const original = originalImageId
       ? draft?.images.find((image) => image.id === originalImageId)
       : undefined;
+    if (originalImageId && !original)
+      throw new Error(
+        gt("The original attachment changed while preparing the image. Reopen it and try again."),
+      );
     const stagedRequest = original?.imageEditRequest ?? original?.imageEditor?.stagedRequest;
     if (stagedRequest?.editor && !original?.imageEditor)
       throw new Error(
@@ -2917,6 +2921,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const count =
       (draft?.images.length ?? 0) +
       (draft?.files.length ?? 0) +
+      (editingQueuedAttachments?.length ?? 0) +
       countPreparingComposerImages(attachmentTargetKey);
     if (
       result.files.length === 0 ||
@@ -2959,6 +2964,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const currentCount =
           (current?.images.length ?? 0) +
           (current?.files.length ?? 0) +
+          (editingQueuedAttachments?.length ?? 0) +
           countPreparingComposerImages(attachmentTargetKey) -
           reservations.length;
         if (

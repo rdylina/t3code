@@ -172,7 +172,12 @@ function UserMessagePreviewAnnotationDetails(props: {
           aria-label={gt("Preview {name}", { name: props.image.name })}
           onClick={() => {
             if (!props.image) return;
-            const preview = buildExpandedImagePreview([props.image], props.image.id);
+            const preview = buildExpandedImagePreview(
+              [props.image],
+              props.image.id,
+              undefined,
+              ctx.activeThreadEnvironmentId,
+            );
             if (preview) ctx.onImageExpand(preview);
           }}
         >

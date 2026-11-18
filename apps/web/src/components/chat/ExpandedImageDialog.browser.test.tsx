@@ -29,6 +29,7 @@ import type { ImageEditorResult } from "../image-editor/ImageEditor";
 import { createImageEditorDocument } from "../image-editor/imageEditorDocument";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { showContextMenuFallback, dismissContextMenu } from "~/contextMenuFallback";
 import { toastManager } from "../ui/toast";
 import { retainThreadOverlaysForThread } from "./threadOverlayRetention";
 
@@ -554,6 +555,12 @@ describe("ExpandedImageDialog", () => {
       const instructions = page.getByRole("textbox", { name: "Edit instructions" });
       await expect.element(instructions).toBeEnabled();
       await userEvent.fill(instructions, "Keep this unsaved edit");
+      using _menu = { [Symbol.dispose]: dismissContextMenu };
+      void showContextMenuFallback([{ id: "copy", label: "Copy" }]);
+      await expect.element(page.getByRole("menu")).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+      await expect.element(instructions).toHaveValue("Keep this unsaved edit");
+
       await userEvent.click(
         page.elementLocator(document.querySelector('[data-slot="dialog-viewport"]')!),
         { position: { x: 1, y: 1 } },
@@ -594,6 +601,45 @@ describe("ExpandedImageDialog", () => {
       }
     },
   );
+
+  it("keeps the selected image while its editor bytes load", async () => {
+    const bytes = await (await fetch(PIXEL)).blob();
+    const source = URL.createObjectURL(bytes);
+    using _source = { [Symbol.dispose]: () => URL.revokeObjectURL(source) };
+    const pending = Promise.withResolvers<Response>();
+    const originalFetch = globalThis.fetch;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) =>
+        input === source ? pending.promise : originalFetch(input, init),
+      );
+    await using screen = await render(
+      <ExpandedImageDialog
+        preview={{
+          images: [
+            {
+              src: PIXEL,
+              name: "first.png",
+              actionsSource: { kind: "image", name: "first.png", src: source },
+            },
+            { src: PIXEL, name: "second.png" },
+          ],
+          index: 0,
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Edit image", exact: true }));
+    await expect.element(screen.getByRole("button", { name: "Next media" })).toBeDisabled();
+    await userEvent.keyboard("{ArrowRight}");
+    await expect.element(page.getByText("first.png (1/2)", { exact: true })).toBeVisible();
+    pending.resolve(new Response(bytes));
+    await expect.element(screen.getByRole("textbox", { name: "Edit instructions" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Close image editor" }));
+    await expect.element(screen.getByRole("button", { name: "Next media" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Next media" }));
+    await expect.element(page.getByText("second.png (2/2)", { exact: true })).toBeVisible();
+  });
 
   it("preserves canonical original names through repeated reapplication", async () => {
     const originalFile = new File([await (await fetch(PIXEL)).blob()], "robot.png", {

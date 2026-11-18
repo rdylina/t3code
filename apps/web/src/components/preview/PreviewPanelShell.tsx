@@ -167,7 +167,7 @@ function PreviewPanelShellFrame(
             ? // Maximizing meets the sidebar border or window edge; omit the duplicate border.
               "flex-1"
             : // A docked image editor needs room beside the chat column, so the panel yields to both.
-              "shrink-0 border-l border-border group-has-[[data-docked-image-editor]]/image-workspace:max-w-[max(22.5rem,calc(100cqw-52.5rem))]"
+              "shrink-0 border-l border-border [--preview-panel-width:var(--resizable-width)] group-has-[[data-docked-image-editor]]/image-workspace:[--preview-panel-width:min(var(--resizable-width),max(22.5rem,calc(100cqw-52.5rem)))]"
           : "w-full",
         collapsible &&
           "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
@@ -182,7 +182,7 @@ function PreviewPanelShellFrame(
                 ? "100%"
                 : collapsible && !open
                   ? "0px"
-                  : `var(${RESIZABLE_WIDTH_PROPERTY})`,
+                  : "var(--preview-panel-width)",
               transitionDuration: suppressWidthTransition ? "0ms" : undefined,
             } as CSSProperties)
           : undefined
@@ -207,7 +207,7 @@ function PreviewPanelShellFrame(
           )}
           style={
             collapsible && !maximized
-              ? { width: `calc(var(${RESIZABLE_WIDTH_PROPERTY}) - 1px)` }
+              ? { width: "calc(var(--preview-panel-width) - 1px)" }
               : undefined
           }
         >

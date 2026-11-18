@@ -14,6 +14,7 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Textarea } from "../ui/textarea";
 import { downloadImageArchive, readImageArchive } from "./imageGallery.logic";
+import { prepareImageEditorAttachments } from "./imageEditorAttachments";
 import { createAnimationFrameSheet } from "./imageAnimation";
 
 import { AttachmentImage } from "../media/AttachmentImage";
@@ -120,6 +121,7 @@ export function ImageGallery({
       const original = new File([blob], image.name, {
         type: blob.type.startsWith("image/") ? blob.type : "image/gif",
       });
+      await prepareImageEditorAttachments({ files: [original] });
       const sheet = await createAnimationFrameSheet(blob, image.name);
       await onFrameSheet(image, sheet.file, sheet.context, original);
     });

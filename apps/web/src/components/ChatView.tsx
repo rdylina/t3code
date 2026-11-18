@@ -567,6 +567,15 @@ export default function ChatView(props: ChatViewProps) {
     composerRef,
   });
   const composerDraftTarget = queuedRunEdit.draftTarget;
+  const imageEditDraftKey =
+    typeof composerDraftTarget === "string"
+      ? composerDraftTarget
+      : scopedThreadKey(composerDraftTarget);
+  const currentImageEditDraftKeyRef = useRef(imageEditDraftKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- async gallery reads must stay bound to the committed composer draft
+  useLayoutEffect(() => {
+    currentImageEditDraftKeyRef.current = imageEditDraftKey;
+  }, [imageEditDraftKey]);
   const reportedModelSelection = serverProjection
     ? deriveReportedModelSelection(serverProjection)
     : null;
@@ -3114,6 +3123,8 @@ export default function ChatView(props: ChatViewProps) {
     if (hasNewMessage && timelineLiveFollowEnabled) scrollToEnd(true);
   }, [routeThreadKey, pendingGuestMessageKey, timelineLiveFollowEnabled, scrollToEnd]);
   const onExpandTimelineImage = (preview: ExpandedImagePreview) => {
+    imageGalleryRequestRef.current = null;
+    setLoadingImageGalleryThreadKey(null);
     openExpandedImagePreview(routeThreadKey, {
       ...preview,
       onApply:
@@ -3123,7 +3134,10 @@ export default function ChatView(props: ChatViewProps) {
   };
   const onExpandTimelineImageStable = useStableCallback(onExpandTimelineImage);
   const assertImageEditThread = () => {
-    if (currentRouteThreadKeyRef.current !== routeThreadKey) {
+    if (
+      currentRouteThreadKeyRef.current !== routeThreadKey ||
+      currentImageEditDraftKeyRef.current !== imageEditDraftKey
+    ) {
       throw new Error(gt("The thread changed while preparing the image. Reopen it and try again."));
     }
     if (!composerRef.current)

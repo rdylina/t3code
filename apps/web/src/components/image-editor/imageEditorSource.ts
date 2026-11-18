@@ -35,7 +35,6 @@ export function editedImageSource(
       return croppedChild ? [croppedChild] : [];
     });
     let bounds = null;
-    let fullyVisible = false;
     if (node.bounds) {
       const sourceLeft = node.bounds.x * scaleX;
       const sourceTop = node.bounds.y * scaleY;
@@ -51,21 +50,14 @@ export function editedImageSource(
       const endY = Math.round((bottom - frame.y) * outputScaleY);
       if (endX > x && endY > y) {
         bounds = { x, y, width: endX - x, height: endY - y };
-        fullyVisible =
-          left === sourceLeft &&
-          top === sourceTop &&
-          right === sourceRight &&
-          bottom === sourceBottom;
       }
     }
     if (!bounds && children.length === 0) return null;
     const croppedNode = { ...node, bounds, children };
-    if (!fullyVisible) {
-      // Text on partially clipped or unlocated nodes cannot be attributed to the cropped pixels.
-      delete croppedNode.name;
-      delete croppedNode.value;
-      delete croppedNode.description;
-    }
+    // Computed accessibility text can refer to labels outside even a fully contained node.
+    delete croppedNode.name;
+    delete croppedNode.value;
+    delete croppedNode.description;
     return croppedNode;
   };
   const root = cropNode(accessibility.root);

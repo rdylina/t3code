@@ -226,6 +226,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     : source;
 
   const navigateImage = (direction: -1 | 1) => {
+    if (loading || operationBusy) return;
     if (galleryPreviewIndex !== null)
       setGalleryPreviewIndex((current) => (current ?? 0) + direction);
     else setImageOffset((current) => current + direction);
@@ -445,15 +446,15 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             eventDetails.cancel();
             return;
           }
+          // Escape belongs to an open context menu first.
+          if (eventDetails.reason === "escape-key" && isContextMenuOpen()) {
+            eventDetails.cancel();
+            return;
+          }
           if (editing) {
             eventDetails.cancel();
             if (eventDetails.reason === "outside-press" && editorDirty) return;
             cancelEditor();
-            return;
-          }
-          // Escape belongs to an open context menu first.
-          if (eventDetails.reason === "escape-key" && isContextMenuOpen()) {
-            eventDetails.cancel();
             return;
           }
           if (!gallery && galleryPreviewIndex !== null) backFromPreview();
@@ -652,6 +653,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                     size="icon"
                     variant="media-navigation"
                     className="left-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
+                    disabled={loading || operationBusy}
                     aria-label={gt("Previous media")}
                     onClick={() => navigateImage(-1)}
                   >
@@ -757,6 +759,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                     size="icon"
                     variant="media-navigation"
                     className="right-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
+                    disabled={loading || operationBusy}
                     aria-label={gt("Next media")}
                     onClick={() => navigateImage(1)}
                   >

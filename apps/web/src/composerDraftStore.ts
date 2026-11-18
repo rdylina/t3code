@@ -214,9 +214,23 @@ function serializeComposerDraftState(value: StorageValue<ComposerPersistState>):
   if (!("capturedState" in value.state)) {
     return JSON.stringify({ state: value.state, version: value.version });
   }
-  const local = partializeComposerDraftStoreState(value.state.capturedState);
   const baseline = composerDraftLastWrite?.local ?? composerDraftLoadedState;
   const stored = baseline ? readStoredComposerDraftState() : null;
+  const captured = value.state.capturedState;
+  const draftsByThreadKey = { ...captured.draftsByThreadKey };
+  for (const [key, draft] of Object.entries(draftsByThreadKey)) {
+    const cachedIds = new Set(draft.persistedAttachments.map((image) => image.id));
+    const liveIds = new Set(draft.images.map((image) => image.id));
+    const saved = stored?.draftsByThreadKey[key]?.attachments ?? [];
+    const fallback = saved.filter((image) => liveIds.has(image.id) && !cachedIds.has(image.id));
+    // Keep the last saved version while replacement bytes are being serialized; never revive a deleted image.
+    if (fallback.length)
+      draftsByThreadKey[key] = {
+        ...draft,
+        persistedAttachments: [...draft.persistedAttachments, ...fallback],
+      };
+  }
+  const local = partializeComposerDraftStoreState({ ...captured, draftsByThreadKey });
   const merged = stored && baseline ? mergeComposerDraftStates(stored, local, baseline) : local;
   const text = JSON.stringify({ state: merged, version: value.version });
   composerDraftPendingWrite = { text, local, merged };
@@ -266,42 +280,79 @@ function writeComposerDraftState(name: string, text: string) {
   const save = (state: PersistedComposerDraftStoreState) =>
     write(JSON.stringify({ state, version: value.version }), state);
   if (save(stripped)) return;
-  const draftsByThreadKey = Object.fromEntries(
-    Object.entries(stripped.draftsByThreadKey).map(([key, draft]) => {
-      const saved = new Map(
-        previous?.draftsByThreadKey[key]?.attachments.map((attachment) => [
-          attachment.id,
-          attachment.dataUrl,
-        ]),
-      );
-      return [
+  const withoutSessions = (
+    state: PersistedComposerDraftStoreState,
+  ): PersistedComposerDraftStoreState => ({
+    ...state,
+    draftsByThreadKey: Object.fromEntries(
+      Object.entries(state.draftsByThreadKey).map(([key, draft]) => [
         key,
         {
           ...draft,
-          attachments: draft.attachments.filter(
-            (attachment) => saved.get(attachment.id) === attachment.dataUrl,
+          attachments: draft.attachments.map(
+            ({ imageEditor: _imageEditor, ...attachment }) => attachment,
           ),
         },
-      ];
-    }),
-  );
-  // A failed optional edit must not erase attachments that were already saved.
-  if (!save({ ...stripped, draftsByThreadKey })) return;
+      ]),
+    ),
+  });
+  if (save(withoutSessions(stripped))) return;
+  let retained: PersistedComposerDraftStoreState = {
+    ...stripped,
+    draftsByThreadKey: Object.fromEntries(
+      Object.entries(stripped.draftsByThreadKey).map(([key, draft]) => {
+        const saved = new Map(
+          previous?.draftsByThreadKey[key]?.attachments.map((attachment) => [
+            attachment.id,
+            attachment,
+          ]),
+        );
+        return [
+          key,
+          {
+            ...draft,
+            attachments: draft.attachments.flatMap((attachment) => {
+              const old = saved.get(attachment.id);
+              return old ? [old.dataUrl === attachment.dataUrl ? attachment : old] : [];
+            }),
+          },
+        ];
+      }),
+    ),
+  };
+  // Keep the previous bytes and request metadata when a replacement cannot fit.
+  if (!save(retained)) {
+    retained = withoutSessions(retained);
+    if (!save(retained)) return;
+  }
   for (const [key, draft] of Object.entries(stripped.draftsByThreadKey)) {
-    const retained = new Set(
-      draftsByThreadKey[key]!.attachments.map((attachment) => attachment.id),
-    );
     for (const attachment of draft.attachments) {
-      if (retained.has(attachment.id)) continue;
-      const candidateIds = new Set([...retained, attachment.id]);
+      const current = retained.draftsByThreadKey[key]!;
+      if (
+        current.attachments.some(
+          (saved) => saved.id === attachment.id && saved.dataUrl === attachment.dataUrl,
+        )
+      )
+        continue;
+      const byId = new Map(current.attachments.map((saved) => [saved.id, saved]));
+      byId.set(attachment.id, attachment);
       const candidate = {
-        ...draft,
-        attachments: draft.attachments.filter((image) => candidateIds.has(image.id)),
+        ...retained,
+        draftsByThreadKey: {
+          ...retained.draftsByThreadKey,
+          [key]: {
+            ...draft,
+            attachments: draft.attachments.flatMap((image) => {
+              const saved = byId.get(image.id);
+              return saved ? [saved] : [];
+            }),
+          },
+        },
       };
-      const candidateDrafts = { ...draftsByThreadKey, [key]: candidate };
-      if (save({ ...stripped, draftsByThreadKey: candidateDrafts })) {
-        retained.add(attachment.id);
-        draftsByThreadKey[key] = candidate;
+      if (save(candidate)) retained = candidate;
+      else {
+        const compact = withoutSessions(candidate);
+        if (save(compact)) retained = compact;
       }
     }
   }
@@ -3777,7 +3828,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               },
             };
           });
-          if (previous.previewUrl !== image.previewUrl) revokeObjectPreviewUrl(previous.previewUrl);
+          if (
+            previous.previewUrl !== image.previewUrl &&
+            !Object.values(get().draftsByThreadKey).some((draft) =>
+              draft.images.some((entry) => entry.previewUrl === previous.previewUrl),
+            )
+          )
+            revokeObjectPreviewUrl(previous.previewUrl);
           return true;
         },
         removeImage: (threadRef, imageId) => {

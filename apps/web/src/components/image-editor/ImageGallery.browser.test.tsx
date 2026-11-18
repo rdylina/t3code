@@ -1,3 +1,4 @@
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -62,6 +63,16 @@ it("passes the exact GIF snapshot used to decode the frame sheet to chat", async
   expect(bitmap.width).toBeGreaterThan(0);
   expect(bitmap.height).toBeGreaterThan(0);
   bitmap.close();
+  readImage.mockResolvedValueOnce(
+    new Blob([gif, new Uint8Array(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)], { type: "image/gif" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Edit frames" }));
+  await expect
+    .element(screen.getByRole("alert"))
+    .toHaveTextContent(
+      "This GIF exceeds the attachment limits. Resize the animation before adding it to chat.",
+    );
+  expect(onFrameSheet).toHaveBeenCalledOnce();
 });
 
 it("keeps batch selections and feedback through a failed edit while locking competing actions", async () => {

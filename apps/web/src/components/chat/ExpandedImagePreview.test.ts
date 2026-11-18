@@ -1,3 +1,4 @@
+import { ChatAttachmentId, EnvironmentId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { buildExpandedImagePreview, resolveMarkdownMediaPreview } from "./ExpandedImagePreview";
@@ -37,6 +38,33 @@ describe("resolveMarkdownMediaPreview", () => {
 });
 
 describe("buildExpandedImagePreview", () => {
+  it.each(["image", "file"] as const)("keeps a renewable asset for a stored %s image", (type) => {
+    const environmentId = EnvironmentId.make("remote");
+    const attachment = {
+      id: ChatAttachmentId.make("stored"),
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 10,
+      previewUrl: "https://host/image?expired",
+    };
+    const preview = buildExpandedImagePreview(
+      [type === "image" ? { ...attachment, type: "image" } : { ...attachment, type: "file" }],
+      "stored",
+      undefined,
+      environmentId,
+    );
+    expect(preview?.images[0]?.actionsSource?.asset).toEqual({
+      environmentId,
+      resource: {
+        _tag: "attachment",
+        attachmentId: "stored",
+        fileName: "photo.png",
+        mimeType: "image/png",
+      },
+    });
+    expect(preview?.images[0]?.attachmentId).toBeUndefined();
+  });
+
   it("keeps MIME type for stored images without a filename extension", () => {
     const preview = buildExpandedImagePreview(
       [

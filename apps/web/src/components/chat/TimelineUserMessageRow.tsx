@@ -710,7 +710,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           annotationImage={annotationImage}
           attachment={attachment}
           onExpandImage={(image, edit) => {
-            const preview = buildExpandedImagePreview(userImages, image.id, copySnapshot);
+            const preview = buildExpandedImagePreview(
+              userImages,
+              image.id,
+              copySnapshot,
+              ctx.activeThreadEnvironmentId,
+            );
             if (preview) onImageExpand({ ...preview, ...(edit ? { edit: true } : {}) });
           }}
           onOpenFile={onFileOpen}
@@ -802,7 +807,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 }}
                 showTooltip={false}
                 onEditImage={() => {
-                  const preview = buildExpandedImagePreview(regularImages, image.id, copySnapshot);
+                  const preview = buildExpandedImagePreview(
+                    regularImages,
+                    image.id,
+                    copySnapshot,
+                    ctx.activeThreadEnvironmentId,
+                  );
                   if (preview) ctx.onImageExpand({ ...preview, edit: true });
                 }}
               >
@@ -815,6 +825,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                       regularImages,
                       image.id,
                       copySnapshot,
+                      ctx.activeThreadEnvironmentId,
                     );
                     if (!preview) return;
                     ctx.onImageExpand(preview);

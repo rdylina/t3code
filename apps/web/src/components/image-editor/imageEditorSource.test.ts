@@ -8,7 +8,14 @@ function node(
   bounds: SnapShotAccessibilityNode["bounds"],
   children: SnapShotAccessibilityNode[] = [],
 ): SnapShotAccessibilityNode {
-  return { role: "button", name, bounds, children };
+  return {
+    role: "button",
+    name,
+    value: "External value",
+    description: "External description",
+    bounds,
+    children,
+  };
 }
 
 function source(): SnapShotSource {
@@ -63,12 +70,15 @@ describe("edited screenshot metadata", () => {
       root: {
         bounds: { x: 0, y: 0, width: 800, height: 400 },
         children: [
-          { name: "Visible", bounds: { x: 100, y: 100, width: 400, height: 200 } },
+          { bounds: { x: 100, y: 100, width: 400, height: 200 } },
           { bounds: { x: 0, y: 0, width: 200, height: 300 } },
         ],
       },
     });
     const json = JSON.stringify(edited);
+    expect(json).not.toContain("Visible");
+    expect(json).not.toContain("External value");
+    expect(json).not.toContain("External description");
     expect(json).not.toContain("Partial");
     expect(json).not.toContain("Outside");
     expect(json).not.toContain("Unknown");

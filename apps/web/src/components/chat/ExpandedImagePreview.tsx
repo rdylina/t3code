@@ -1,7 +1,12 @@
 import type { SnapShotSource } from "@t3tools/contracts";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
-import { type ChatFileAttachment, type ChatImageAttachment, isVideoAttachment } from "../../types";
+import {
+  type ChatFileAttachment,
+  type ChatImageAttachment,
+  isImageAttachment,
+  isVideoAttachment,
+} from "../../types";
 import type {
   AssetCreateUrlResult,
   AssetResource,
@@ -176,12 +181,18 @@ export function attachVideoThumbnail(video: HTMLVideoElement, file: File): () =>
 }
 
 export function buildExpandedImagePreview(
-  images: ReadonlyArray<ChatImageAttachment | ComposerFileAttachment>,
+  images: ReadonlyArray<ChatImageAttachment | ChatFileAttachment | ComposerFileAttachment>,
   selectedImageId: string,
   onCopySnapshot?: (id: string) => Promise<void>,
+  environmentId?: EnvironmentId,
 ): ExpandedImagePreview | null {
   const selected = images.find((image) => image.id === selectedImageId);
-  if (selected?.type === "file" && selected.file && isVideoAttachment(selected)) {
+  if (
+    selected?.type === "file" &&
+    "file" in selected &&
+    selected.file &&
+    isVideoAttachment(selected)
+  ) {
     return {
       images: [
         {
@@ -195,10 +206,11 @@ export function buildExpandedImagePreview(
     };
   }
   const previewableImages = images.flatMap((image) =>
-    image.type === "image" && image.previewUrl
+    isImageAttachment(image) && image.previewUrl
       ? [
           {
             id: image.id,
+            attachmentId: "file" in image ? image.id : undefined,
             src: image.previewUrl,
             name: image.name,
             mimeType: image.mimeType,
@@ -218,10 +230,28 @@ export function buildExpandedImagePreview(
   }
   return {
     images: previewableImages.map((image) => ({
-      attachmentId: image.id,
+      ...(image.attachmentId ? { attachmentId: image.attachmentId } : {}),
       src: image.src,
       name: image.name,
       mimeType: image.mimeType,
+      ...(environmentId && !/^(?:blob|data):/.test(image.src)
+        ? {
+            actionsSource: {
+              kind: "image" as const,
+              name: image.name,
+              src: image.src,
+              asset: {
+                environmentId,
+                resource: {
+                  _tag: "attachment" as const,
+                  attachmentId: image.id,
+                  fileName: image.name,
+                  mimeType: image.mimeType,
+                },
+              },
+            },
+          }
+        : {}),
       ...(image.source?.kind === "snap-shot"
         ? {
             source: image.source,
