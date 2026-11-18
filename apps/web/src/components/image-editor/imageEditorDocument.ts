@@ -22,6 +22,7 @@ export type ImageEditorObject = ImageEditorObjectBase &
     | {
         readonly kind: "freehand" | "remove" | "arrow";
         readonly points: readonly ImageEditorPoint[];
+        readonly arrowheadMinLength?: number;
       }
     | { readonly kind: "rectangle" | "ellipse" }
     | {
@@ -234,6 +235,92 @@ function segmentDistance(point: ImageEditorPoint, a: ImageEditorPoint, b: ImageE
   return Math.hypot(point.x - a.x - dx * t, point.y - a.y - dy * t);
 }
 
+function arrowGeometry(
+  object: Extract<ImageEditorObject, { kind: "arrow" | "freehand" | "remove" }>,
+) {
+  const start = object.points[0] ?? { x: 0, y: 0 };
+  const target = object.points.at(-1) ?? { x: object.width, y: object.height };
+  const angle = Math.atan2(target.y - start.y, target.x - start.x);
+  const length = Math.max(object.arrowheadMinLength ?? 12, object.strokeWidth * 4);
+  const wing = (delta: number) => ({
+    x: target.x - length * Math.cos(angle + delta),
+    y: target.y - length * Math.sin(angle + delta),
+  });
+  return { start, target, left: wing(-0.45), right: wing(0.45) };
+}
+
+function ellipseDistance(point: ImageEditorPoint, rx: number, ry: number): number {
+  const [a, b, x, y] =
+    rx >= ry
+      ? [rx, ry, Math.abs(point.x - rx), Math.abs(point.y - ry)]
+      : [ry, rx, Math.abs(point.y - ry), Math.abs(point.x - rx)];
+  if (y === 0) {
+    const closestX = a * x < a * a - b * b ? (a * a * x) / (a * a - b * b) : a;
+    return Math.hypot(closestX - x, b * Math.sqrt(Math.max(0, 1 - (closestX / a) ** 2)));
+  }
+  let low = -b * b;
+  let high = Math.max(0, a * x + b * y);
+  for (let i = 0; i < 48; i++) {
+    const t = (low + high) / 2;
+    if (((a * x) / (t + a * a)) ** 2 + ((b * y) / (t + b * b)) ** 2 > 1) low = t;
+    else high = t;
+  }
+  const t = (low + high) / 2;
+  return Math.hypot((a * a * x) / (t + a * a) - x, (b * b * y) / (t + b * b) - y);
+}
+
+export function imageEditorHasVisibleRemoval(document: ImageEditorDocument): boolean {
+  const frame = document.crop ?? { x: 0, y: 0, width: document.width, height: document.height };
+  const corners = [
+    { x: frame.x, y: frame.y },
+    { x: frame.x + frame.width, y: frame.y },
+    { x: frame.x, y: frame.y + frame.height },
+    { x: frame.x + frame.width, y: frame.y + frame.height },
+  ];
+  const distanceToFrame = (point: ImageEditorPoint) =>
+    Math.hypot(
+      Math.max(frame.x - point.x, 0, point.x - frame.x - frame.width),
+      Math.max(frame.y - point.y, 0, point.y - frame.y - frame.height),
+    );
+  return document.objects.some((object) => {
+    if (object.kind !== "remove" || object.strokeWidth <= 0) return false;
+    const angle = (object.rotation * Math.PI) / 180;
+    const points = object.points.map((point) => {
+      const x = point.x - object.width / 2;
+      const y = point.y - object.height / 2;
+      return {
+        x: object.x + object.width / 2 + x * Math.cos(angle) - y * Math.sin(angle),
+        y: object.y + object.height / 2 + x * Math.sin(angle) + y * Math.cos(angle),
+      };
+    });
+    return points.some((a, index) => {
+      const b = points[index + 1] ?? a;
+      let enter = 0;
+      let exit = 1;
+      for (const [start, delta, min, max] of [
+        [a.x, b.x - a.x, frame.x, frame.x + frame.width],
+        [a.y, b.y - a.y, frame.y, frame.y + frame.height],
+      ] as const) {
+        if (delta === 0) {
+          if (start < min || start > max) exit = -1;
+        } else {
+          enter = Math.max(enter, Math.min((min - start) / delta, (max - start) / delta));
+          exit = Math.min(exit, Math.max((min - start) / delta, (max - start) / delta));
+        }
+      }
+      return (
+        enter <= exit ||
+        Math.min(
+          distanceToFrame(a),
+          distanceToFrame(b),
+          ...corners.map((point) => segmentDistance(point, a, b)),
+        ) <
+          object.strokeWidth / 2
+      );
+    });
+  });
+}
+
 export function hitTestImageEditorObject(
   document: ImageEditorDocument,
   point: ImageEditorPoint,
@@ -253,16 +340,15 @@ export function hitTestImageEditorObject(
       continue;
     }
     if (object.kind === "arrow") {
-      const start = object.points[0] ?? { x: 0, y: 0 };
-      const end = object.points.at(-1) ?? { x: object.width, y: object.height };
-      if (segmentDistance(local, start, end) <= tolerance) return object;
+      const { start, target, left, right } = arrowGeometry(object);
+      if ([start, left, right].some((point) => segmentDistance(local, point, target) <= tolerance))
+        return object;
       continue;
     }
     if (object.kind === "ellipse") {
       const rx = Math.max(1, object.width / 2);
       const ry = Math.max(1, object.height / 2);
-      const distance = Math.hypot((local.x - rx) / rx, (local.y - ry) / ry);
-      if (Math.abs(distance - 1) <= tolerance / Math.min(rx, ry)) return object;
+      if (ellipseDistance(local, rx, ry) <= tolerance) return object;
       continue;
     }
     if (
@@ -286,12 +372,14 @@ export function hitTestImageEditorObject(
 }
 
 function xml(value: string): string {
-  return value.replace(
-    /[&<>"']/g,
-    (character) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character] ??
-      character,
-  );
+  return value
+    .replace(/[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd\u{10000}-\u{10ffff}]/gu, "")
+    .replace(
+      /[&<>"']/g,
+      (character) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character] ??
+        character,
+    );
 }
 
 function number(value: number): string {
@@ -335,13 +423,9 @@ export function imageEditorSvgMarkup(
           content = `<ellipse cx="${number(object.width / 2)}" cy="${number(object.height / 2)}" rx="${number(object.width / 2)}" ry="${number(object.height / 2)}" ${stroke}/>`;
           break;
         case "arrow": {
-          const start = object.points[0] ?? { x: 0, y: 0 };
-          const target = object.points.at(-1) ?? { x: object.width, y: object.height };
-          const angle = Math.atan2(target.y - start.y, target.x - start.x);
-          const length = Math.max(12, object.strokeWidth * 4);
-          const end = (delta: number) =>
-            `${number(target.x - length * Math.cos(angle + delta))} ${number(target.y - length * Math.sin(angle + delta))}`;
-          content = `<path d="M${number(start.x)} ${number(start.y)} L${number(target.x)} ${number(target.y)} M${end(-0.45)} L${number(target.x)} ${number(target.y)} L${end(0.45)}" ${stroke}/>`;
+          const { start, target, left, right } = arrowGeometry(object);
+          const point = (p: ImageEditorPoint) => `${number(p.x)} ${number(p.y)}`;
+          content = `<path d="M${point(start)} L${point(target)} M${point(left)} L${point(target)} L${point(right)}" ${stroke}/>`;
           break;
         }
         case "text": {
@@ -408,7 +492,7 @@ export function buildImageEditorPrompt(
   if (comments.length > 0) {
     lines.push("Location comments (coordinates relative to the original attachment):", ...comments);
   }
-  if (document.objects.some((object) => object.kind === "remove")) {
+  if (imageEditorHasVisibleRemoval(document)) {
     lines.push(
       "Remove the areas painted red in the guidance image and repair them to match their surroundings. The attached mask uses white for the selected areas and black for areas to preserve. Treat it as visual guidance if the image tool does not accept a mask input.",
     );

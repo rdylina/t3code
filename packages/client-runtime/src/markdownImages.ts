@@ -25,7 +25,10 @@ export function markdownImageSourceFragment(source: string): string {
 function joinWorkspacePath(workspaceRoot: string, relativePath: string): string {
   const separator = isWindowsAbsolutePath(workspaceRoot) ? "\\" : "/";
   const root = workspaceRoot.replace(/[\\/]+$/, "");
-  const path = relativePath.replace(/[\\/]/g, separator).replace(/^[\\/]+/, "");
+  const path = relativePath
+    .replace(/^(?:\.[\\/])+/, "")
+    .replace(/[\\/]/g, separator)
+    .replace(/^[\\/]+/, "");
   return `${root}${separator}${path}`;
 }
 

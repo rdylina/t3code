@@ -49,7 +49,7 @@ export function ImageGallery({
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState<"download" | "apply" | "frames" | "share" | null>(null);
   const [preparedShare, setPreparedShare] = useState<{
-    readonly key: string;
+    readonly images: readonly ExpandedImageItem[];
     readonly file: File;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,9 +62,10 @@ export function ImageGallery({
   const allSelected = imageEntries.length > 0 && selectedImages.length === imageEntries.length;
   const downloadImages =
     selectedImages.length > 0 ? selectedImages : imageEntries.map(({ image }) => image);
-  const shareKey = JSON.stringify(
-    downloadImages.map((image) => [image.src, image.actionsSource?.asset, image.name]),
-  );
+  const shareIsCurrent =
+    preparedShare !== null &&
+    preparedShare.images.length === downloadImages.length &&
+    preparedShare.images.every((image, index) => image === downloadImages[index]);
   const sharingAvailable =
     typeof navigator.share === "function" && typeof navigator.canShare === "function";
   const run = async (
@@ -98,7 +99,7 @@ export function ImageGallery({
     );
   };
   const share = () => {
-    if (preparedShare?.key === shareKey) {
+    if (shareIsCurrent) {
       void run("share", () =>
         navigator.share({ files: [preparedShare.file], title: gt("T3 Code images") }),
       );
@@ -111,7 +112,7 @@ export function ImageGallery({
         throw new Error(
           gt("This browser cannot share ZIP files. Download the images to share them."),
         );
-      setPreparedShare({ key: shareKey, file });
+      setPreparedShare({ images: downloadImages, file });
     });
   };
   const editFrames = (image: ExpandedImageItem) => {
@@ -151,7 +152,7 @@ export function ImageGallery({
             <ShareIcon aria-hidden />
             {busy === "share"
               ? gt("Preparing share…")
-              : preparedShare?.key === shareKey
+              : shareIsCurrent
                 ? gt("Share ZIP")
                 : gt("Prepare share")}
           </Button>

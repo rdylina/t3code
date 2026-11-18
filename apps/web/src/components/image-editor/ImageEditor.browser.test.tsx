@@ -19,13 +19,14 @@ async function pointer(
   x: number,
   y: number,
   target: Element = canvas,
+  pointerId = 1,
 ) {
   const bounds = canvas.getBoundingClientRect();
   await act(() => {
     target.dispatchEvent(
       new PointerEvent(type, {
         bubbles: true,
-        pointerId: 1,
+        pointerId,
         button: 0,
         buttons: type === "pointerup" || type === "pointercancel" ? 0 : 1,
         clientX: bounds.left + (x / 400) * bounds.width,
@@ -257,6 +258,22 @@ it("groups a long focused comment edit into one undo step and keeps earlier draw
   await pointer(canvas, "pointerdown", 20, 20);
   await pointer(canvas, "pointermove", 90, 70);
   await pointer(canvas, "pointerup", 90, 70);
+  const before = canvas.querySelector('g[pointer-events="none"]')!.innerHTML;
+  await pointer(canvas, "pointerdown", 120, 120);
+  await pointer(canvas, "pointermove", 160, 160);
+  await pointer(canvas, "pointerdown", 200, 200, canvas, 2);
+  await pointer(canvas, "pointerup", 240, 240, canvas, 2);
+  await userEvent.keyboard("{Control>}z{/Control}");
+  await pointer(canvas, "pointerup", 180, 180);
+  expect(canvas.querySelector('g[pointer-events="none"]')!.innerHTML).toBe("");
+  await userEvent.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+  expect(canvas.querySelector('g[pointer-events="none"]')!.innerHTML).toBe(before);
+  await pointer(canvas, "pointerdown", 120, 120);
+  await pointer(canvas, "pointerdown", 200, 200, canvas, 2);
+  await pointer(canvas, "pointermove", 160, 160);
+  await pointer(canvas, "pointerup", 160, 160);
+  expect(canvas.querySelectorAll('g[pointer-events="none"] rect')).toHaveLength(2);
+  await userEvent.keyboard("{Control>}z{/Control}");
   await userEvent.click(screen.getByRole("button", { name: "Comment pin", exact: true }));
   await pointer(canvas, "pointerdown", 180, 100);
   const inlineComment = page.getByRole("textbox", { name: "Annotation comment", exact: true });
@@ -737,6 +754,41 @@ it.each([
   await userEvent.keyboard("{Control>}z{/Control}");
   await expect.element(screen.getByRole("heading", { name: "Staged changes (2)" })).toBeVisible();
   await expect.element(row).toBeVisible();
+});
+
+it("crops an oversized GIF before freezing its still frame and restores the cropped source", async () => {
+  const src = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="6000" height="6000"><rect width="6000" height="6000" fill="red"/></svg>')}`;
+  const onApply = vi
+    .fn<(result: ImageEditorResult) => Promise<void>>()
+    .mockResolvedValue(undefined);
+  await using screen = await render(
+    <ImageEditor
+      src={src}
+      name="large.gif"
+      mimeType="image/gif"
+      onCancel={vi.fn()}
+      onApply={onApply}
+    />,
+  );
+  const crop = screen.getByRole("button", { name: "Crop", exact: true });
+  await expect.element(crop).toBeEnabled();
+  await userEvent.click(crop);
+  const canvas = screen
+    .getByRole("application", { name: "Editable annotations" })
+    .element() as SVGSVGElement;
+  using _capture = vi.spyOn(canvas, "setPointerCapture").mockImplementation(() => {});
+  await pointer(canvas, "pointerdown", 40, 30);
+  await pointer(canvas, "pointermove", 80, 60);
+  await pointer(canvas, "pointerup", 80, 60);
+  await userEvent.click(screen.getByRole("button", { name: "Edit a still frame" }));
+  await expect.element(screen.getByRole("button", { name: "Add edit request" })).toBeEnabled();
+  await userEvent.click(screen.getByRole("button", { name: "Add edit request" }));
+  await vi.waitFor(() => expect(onApply).toHaveBeenCalledOnce());
+  const result = onApply.mock.calls[0]![0];
+  expect(result.document).toMatchObject({ width: 600, height: 600, crop: null });
+  const bitmap = await createImageBitmap(result.originalFile);
+  expect([bitmap.width, bitmap.height]).toEqual([600, 600]);
+  bitmap.close();
 });
 
 it("requires still-frame confirmation when opaque metadata hides the original GIF bytes", async () => {

@@ -15,13 +15,43 @@ describe("createImageArchive", () => {
       { name: "../../café.png", bytes },
       { name: "CAFÉ.png", bytes: new Uint8Array([0, 255]) },
       { name: "..", bytes: new Uint8Array([42]) },
+      ...[
+        "CON.png",
+        "con.png",
+        "PRN",
+        "AUX.jpg",
+        "NUL.gif",
+        "COM1.txt",
+        "LPT9.png",
+        "trailing. ",
+      ].map((name) => ({ name, bytes })),
     ]);
     const archive = await JSZip.loadAsync(await blob.arrayBuffer(), { checkCRC32: true });
-    expect(Object.keys(archive.files)).toEqual(["café.png", "CAFÉ (2).png", "image-3"]);
+    expect(Object.keys(archive.files)).toEqual([
+      "café.png",
+      "CAFÉ (2).png",
+      "image-3",
+      "_CON.png",
+      "_con (2).png",
+      "_PRN",
+      "_AUX.jpg",
+      "_NUL.gif",
+      "_COM1.txt",
+      "_LPT9.png",
+      "trailing",
+    ]);
     expect(Object.values(archive.files).map((entry) => entry.unsafeOriginalName)).toEqual([
       "café.png",
       "CAFÉ (2).png",
       "image-3",
+      "_CON.png",
+      "_con (2).png",
+      "_PRN",
+      "_AUX.jpg",
+      "_NUL.gif",
+      "_COM1.txt",
+      "_LPT9.png",
+      "trailing",
     ]);
     expect(await archive.file("café.png")?.async("uint8array")).toEqual(bytes);
     expect(await archive.file("CAFÉ (2).png")?.async("uint8array")).toEqual(

@@ -61,7 +61,7 @@ export async function exportEditorImage(
   if (options.mode !== "original") {
     const markup = imageEditorSvgMarkup(document, { mode: options.mode });
     if (markup) {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${frame.x} ${frame.y} ${frame.width} ${frame.height}">${markup}</svg>`;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" preserveAspectRatio="none" viewBox="${frame.x} ${frame.y} ${frame.width} ${frame.height}">${markup}</svg>`;
       const objectUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
       const decoded = await decodeImage(objectUrl).then(
         (overlay) => ({ overlay, error: null }),

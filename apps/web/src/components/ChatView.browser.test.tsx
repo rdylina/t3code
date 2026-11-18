@@ -10,6 +10,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   RunId,
   ThreadId,
+  PlanId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
@@ -725,38 +726,47 @@ it("opens conversation images when individual sources are unavailable", async ()
   const seed = threadWithHistory("missing-image-gallery", 1);
   const thread = {
     ...seed,
-    items: seed.items.map((item) =>
-      item.type === "user_message"
-        ? {
-            ...item,
-            attachments: [
-              {
-                type: "image" as const,
-                id: "gallery-missing",
-                name: "missing-attachment.png",
-                mimeType: "image/png",
-                sizeBytes: PNG.length,
-              },
-              {
-                type: "image" as const,
-                id: "gallery-invalid",
-                name: "invalid-url.png",
-                mimeType: "image/png",
-                sizeBytes: PNG.length,
-              },
-              {
-                type: "image" as const,
-                id: "gallery-kept",
-                name: "kept.png",
-                mimeType: "image/png",
-                sizeBytes: PNG.length,
-              },
-            ],
-          }
-        : item.type === "assistant_message"
-          ? { ...item, text: "A missing image.\n\n![missing](./missing.png)" }
-          : item,
-    ),
+    items: [
+      ...seed.items.map((item) =>
+        item.type === "user_message"
+          ? {
+              ...item,
+              attachments: [
+                {
+                  type: "image" as const,
+                  id: "gallery-missing",
+                  name: "missing-attachment.png",
+                  mimeType: "image/png",
+                  sizeBytes: PNG.length,
+                },
+                {
+                  type: "image" as const,
+                  id: "gallery-invalid",
+                  name: "invalid-url.png",
+                  mimeType: "image/png",
+                  sizeBytes: PNG.length,
+                },
+                {
+                  type: "image" as const,
+                  id: "gallery-kept",
+                  name: "kept.png",
+                  mimeType: "image/png",
+                  sizeBytes: PNG.length,
+                },
+              ],
+            }
+          : item.type === "assistant_message"
+            ? { ...item, text: "A missing image.\n\n![missing](./missing.png)" }
+            : item,
+      ),
+      {
+        ...assistantItem(seed.id, seed.runs[0]!.id, "gallery-plan", 90, ""),
+        type: "proposed_plan" as const,
+        planId: PlanId.make("gallery-plan"),
+        markdown: "![plan](./plan.png)",
+        streaming: false,
+      },
+    ],
   };
   using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
@@ -765,8 +775,9 @@ it("opens conversation images when individual sources are unavailable", async ()
   });
   using _assets = answerRpc(
     WS_METHODS.assetsCreateUrl,
-    ({ resource }: { resource: { _tag: string; attachmentId?: string } }) =>
-      resource._tag === "media-file" || resource.attachmentId === "gallery-missing"
+    ({ resource }: { resource: { _tag: string; attachmentId?: string; path?: string } }) =>
+      (resource._tag === "media-file" && !resource.path?.endsWith("/plan.png")) ||
+      resource.attachmentId === "gallery-missing"
         ? Effect.fail(new GalleryReadError({ message: "Image no longer exists" }))
         : Effect.succeed({
             relativeUrl:
@@ -790,9 +801,59 @@ it("opens conversation images when individual sources are unavailable", async ()
   await expect
     .element(page.getByRole("button", { name: /Open image.*(?:missing|invalid)/ }))
     .not.toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: "Open image 2, plan.png" })).toBeVisible();
   expect(
     toast.mock.calls.filter(([entry]) => entry.title === "Unable to open conversation images"),
   ).toEqual([]);
+});
+
+it("rejects an oversized gallery batch before reading any source bytes", async () => {
+  const style = document.createElement("style");
+  style.textContent = appStyles;
+  document.head.append(style);
+  using _style = { [Symbol.dispose]: () => style.remove() };
+  const thread = threadWithHistory("large-image-batch", 1);
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const target = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  const store = useComposerDraftStore.getState();
+  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+  store.setPrompt(target, "Keep this draft");
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByTestId("composer-editor")).toHaveTextContent("Keep this draft");
+  const src = `data:image/png;base64,${btoa(String.fromCharCode(...PNG))}`;
+  await act(() =>
+    openExpandedImagePreview(scopedThreadKey(target), {
+      images: Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS + 1 }, (_, i) => ({
+        src,
+        name: `image-${i}.png`,
+      })),
+      index: 0,
+      gallery: true,
+    }),
+  );
+  await userEvent.click(page.getByRole("checkbox", { name: "Select all", exact: true }));
+  await userEvent.fill(page.getByRole("textbox", { name: "Edit selected images" }), "Make blue");
+  using fetch = vi.spyOn(window, "fetch");
+  await userEvent.click(page.getByRole("button", { name: "Add edits to chat" }));
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent(
+      `A message can contain up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments. Remove some before adding these edits.`,
+    );
+  expect(fetch.mock.calls.filter(([url]) => url === src)).toEqual([]);
+  expect(store.getComposerDraft(target)?.prompt).toBe("Keep this draft");
+  expect(store.getComposerDraft(target)?.images).toHaveLength(0);
 });
 
 it.each(["thread", "preview"] as const)(

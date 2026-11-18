@@ -165,6 +165,19 @@ it("prepares a ZIP before a second share gesture, ignores cancellation and inval
   expect(readImage).toHaveBeenCalledTimes(3);
   await userEvent.click(screen.getByRole("button", { name: "Share ZIP" }));
   await vi.waitFor(() => expect(share).toHaveBeenCalledTimes(2));
+  await screen.rerender(
+    <ImageGallery
+      images={[
+        { src: `${PIXEL}#replaced`, name: "first.png" },
+        { src: PIXEL, name: "second.png" },
+      ]}
+      readImage={readImage}
+      onOpen={vi.fn()}
+      onApply={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await expect.element(screen.getByRole("button", { name: "Prepare share" })).toBeEnabled();
 });
 
 it("reports unsupported ZIP sharing and recovers for a new preparation", async () => {

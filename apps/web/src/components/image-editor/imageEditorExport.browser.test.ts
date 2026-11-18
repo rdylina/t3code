@@ -118,3 +118,34 @@ it("rejects corrupt image bytes with a recoverable decode error", async () => {
     "This image could not be decoded for editing.",
   );
 });
+
+it("aligns annotations with fractional crops after rounding the export dimensions", async () => {
+  const source =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="10"><rect x="0" y="0" width="30" height="10" fill="lime"/></svg>';
+  const image = await loadEditorImage(`data:image/svg+xml,${encodeURIComponent(source)}`);
+  const document = setImageEditorCrop(
+    addImageEditorObject(createImageEditorDocument(30, 10), {
+      id: "fill",
+      kind: "remove",
+      x: 0,
+      y: 1.255,
+      width: 20.49,
+      height: 1,
+      rotation: 0,
+      color: "#ffffff",
+      strokeWidth: 0.4,
+      points: [
+        { x: 0, y: 0 },
+        { x: 20.49, y: 0 },
+      ],
+    }),
+    { x: 0, y: 0, width: 20.49, height: 2.51 },
+  );
+  const result = await pixels(
+    await exportEditorImage(image, document, "fractional.png", { mode: "mask" }),
+  );
+  expect([result.width, result.height]).toEqual([20, 3]);
+  expect(result.at(5, 1)[0]).toBeGreaterThan(105);
+  expect(result.at(5, 0)).toEqual([0, 0, 0, 255]);
+  expect(result.at(5, 2)).toEqual([0, 0, 0, 255]);
+});

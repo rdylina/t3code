@@ -74,8 +74,16 @@ export async function prepareImageEditorAttachments(
     if (!output.ok)
       throw new Error(
         output.reason === "too-large"
-          ? "This image could not fit the attachment size limit. Crop it or use a smaller image."
-          : "This image could not be prepared for sending. Convert it to PNG or JPEG and try again.",
+          ? m(
+              msg(
+                "This image could not fit the attachment size limit. Crop it or use a smaller image.",
+              ),
+            )
+          : m(
+              msg(
+                "This image could not be prepared for sending. Convert it to PNG or JPEG and try again.",
+              ),
+            ),
       );
     const { size } = await inspectImage(output.file);
     if (Math.max(size.width, size.height) > IMAGE_ATTACHMENT_MAX_EDGE)

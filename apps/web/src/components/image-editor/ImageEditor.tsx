@@ -44,6 +44,7 @@ import {
   hitTestImageEditorObject,
   imageEditorObjectBounds,
   imageEditorSvgMarkup,
+  imageEditorHasVisibleRemoval,
   redoImageEditor,
   removeImageEditorObject,
   reorderImageEditorObject,
@@ -60,7 +61,7 @@ import { observeResize } from "~/lib/observeResize";
 import { readMediaBlob } from "../media/mediaContent";
 import { randomUUID } from "~/lib/utils";
 
-import type { ImageEditorOptions } from "./imageEditorSession";
+import { imageEditorDocumentForAttachment, type ImageEditorOptions } from "./imageEditorSession";
 
 export interface ImageEditorResult {
   files: File[];
@@ -390,10 +391,11 @@ export function ImageEditor({
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [viewportSize, setViewportSize] = useState({ width: 800, height: 600 });
-  const [frozenSrc, setFrozenSrc] = useState<string | null>(null);
+  const [frozenImage, setFrozenImage] = useState<{ src: string; croppedFile?: File } | null>(null);
+  const frozenSrc = frozenImage?.src ?? null;
   const [detectedGif, setDetectedGif] = useState(false);
   const [sourceLoaded, setSourceLoaded] = useState(false);
-  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
   const canvasRef = useRef<SVGSVGElement>(null);
   const annotationAnchorRef = useRef<HTMLSpanElement>(null);
   const annotationInputRef = useRef<HTMLTextAreaElement>(null);
@@ -413,13 +415,12 @@ export function ImageEditor({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observe the external canvas viewport so image coordinates stay independent of the panel layout
   useEffect(() => {
-    const viewport = viewportRef.current;
     if (!viewport) return;
     return observeResize(viewport, ([entry]) => {
       if (!entry) return;
       setViewportSize({ width: entry.contentRect.width, height: entry.contentRect.height });
     });
-  }, []);
+  }, [viewport]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the decoded still-frame URL belongs to this editor session
   useEffect(
@@ -435,6 +436,7 @@ export function ImageEditor({
     /\.gif(?:[?#]|$)/i.test(name) ||
     /^data:image\/gif[;,]/i.test(src);
   const isGif = detectedGif || declaredGif;
+  const canCropGif = sourceLoaded && isGif && frozenSrc === null;
   const canEdit = sourceLoaded && document !== null && (!isGif || frozenSrc !== null);
   const selected = document?.objects.find((object) => object.id === selectedId) ?? null;
   const inlineObject =
@@ -443,7 +445,7 @@ export function ImageEditor({
       : null;
   const selectionBounds = selected ? imageEditorObjectBounds(selected) : null;
   const pins = document?.objects.filter((object) => object.kind === "pin") ?? [];
-  const hasRemoval = document?.objects.some((object) => object.kind === "remove") ?? false;
+  const hasRemoval = document ? imageEditorHasVisibleRemoval(document) : false;
   const fitScale = document
     ? Math.min(
         1,
@@ -543,7 +545,14 @@ export function ImageEditor({
   }
 
   function startGesture(event: PointerEvent<SVGSVGElement>) {
-    if (!history || !canEdit || busy || event.button !== 0) return;
+    if (
+      gesture ||
+      !history ||
+      (!canEdit && !(canCropGif && tool === "crop")) ||
+      busy ||
+      event.button !== 0
+    )
+      return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.focus();
@@ -761,7 +770,8 @@ export function ImageEditor({
         ),
       );
     }
-    const originalFile = new File([blob], name, { type: blob.type || "image/png" });
+    const originalFile =
+      frozenImage?.croppedFile ?? new File([blob], name, { type: blob.type || "image/png" });
     const objectUrl = frozenSrc ?? URL.createObjectURL(originalFile);
     const imageResult = await loadEditorImage(objectUrl).then(
       (image) => ({ image, error: null }),
@@ -838,16 +848,19 @@ export function ImageEditor({
     setError(null);
     await (resolveSrc ? resolveSrc() : Promise.resolve(src))
       .then(loadEditorImage)
-      .then((image) =>
-        exportEditorImage(
-          image,
-          createImageEditorDocument(image.naturalWidth, image.naturalHeight),
-          name,
-          { mode: "original" },
-        ),
-      )
+      .then((image) => exportEditorImage(image, document, name, { mode: "original" }))
       .then((file) => {
-        if (mounted.current) setFrozenSrc(URL.createObjectURL(file));
+        if (!mounted.current) return;
+        const crop = document.crop;
+        if (crop) {
+          const rebased = imageEditorDocumentForAttachment(document, {
+            width: Math.max(1, Math.round(crop.width)),
+            height: Math.max(1, Math.round(crop.height)),
+          });
+          setHistory(createImageEditorHistory(rebased));
+          setTool("select");
+        }
+        setFrozenImage({ src: URL.createObjectURL(file), ...(crop ? { croppedFile: file } : {}) });
       })
       .catch((cause: unknown) =>
         setError(cause instanceof Error ? cause.message : gt("Unable to decode a still frame.")),
@@ -899,12 +912,14 @@ export function ImageEditor({
           return;
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
           event.preventDefault();
+          setGesture(null);
           setHistory(
             (current) =>
               current && (event.shiftKey ? redoImageEditor(current) : undoImageEditor(current)),
           );
         } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "y") {
           event.preventDefault();
+          setGesture(null);
           setHistory((current) => current && redoImageEditor(current));
         } else if ((event.key === "Delete" || event.key === "Backspace") && selected && document) {
           event.preventDefault();
@@ -931,7 +946,10 @@ export function ImageEditor({
           size="icon-sm"
           aria-label={gt("Undo image edit")}
           disabled={!history?.past.length || busy}
-          onClick={() => setHistory((current) => current && undoImageEditor(current))}
+          onClick={() => {
+            setGesture(null);
+            setHistory((current) => current && undoImageEditor(current));
+          }}
         >
           <Undo2Icon />
         </Button>
@@ -940,7 +958,10 @@ export function ImageEditor({
           size="icon-sm"
           aria-label={gt("Redo image edit")}
           disabled={!history?.future.length || busy}
-          onClick={() => setHistory((current) => current && redoImageEditor(current))}
+          onClick={() => {
+            setGesture(null);
+            setHistory((current) => current && redoImageEditor(current));
+          }}
         >
           <Redo2Icon />
         </Button>
@@ -967,7 +988,7 @@ export function ImageEditor({
             aria-label={messages(entry.label)}
             title={messages(entry.label)}
             aria-pressed={tool === entry.value}
-            disabled={!canEdit || busy}
+            disabled={(!canEdit && !(canCropGif && entry.value === "crop")) || busy}
             onClick={() => chooseTool(entry.value)}
           >
             {entry.icon}
@@ -1033,7 +1054,7 @@ export function ImageEditor({
       )}
       <div className="flex min-h-48 flex-1 @max-3xl/image-editor:min-h-[28rem] @max-3xl/image-editor:flex-col">
         <div
-          ref={viewportRef}
+          ref={setViewport}
           className="flex min-h-0 min-w-0 flex-1 overflow-auto scrollbar-gutter-both bg-muted/40 @max-3xl/image-editor:min-h-48"
           role="region"
           aria-label={gt("Image editing canvas")}
@@ -1172,7 +1193,9 @@ export function ImageEditor({
                   sideOffset={16}
                   width="sm"
                   padding="compact"
-                  hideWhenAnchorHidden
+                  collisionBoundary={viewport ?? undefined}
+                  collisionAvoidance={{ side: "shift", align: "shift" }}
+                  sticky
                   initialFocus={annotationInputRef}
                   finalFocus={false}
                   aria-label={gt("Annotation text")}

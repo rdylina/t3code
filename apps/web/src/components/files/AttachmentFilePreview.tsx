@@ -217,7 +217,7 @@ export function AttachmentFilePreview(props: {
     setContentError(null);
     const file = props.file;
     void (async () => {
-      if (!file && Date.now() - authorizedAt.current > STALE_URL_MS) {
+      if (!file && props.asset && Date.now() - authorizedAt.current > STALE_URL_MS) {
         const target = await refresh();
         if (controller.signal.aborted) return;
         if (!target) throw new Error(m(msg("Reconnect to the environment and try again.")));
@@ -243,7 +243,7 @@ export function AttachmentFilePreview(props: {
         setContentError(thrownErrorMessage(cause, m) ?? m(msg("Could not load this file.")));
     });
     return () => controller.abort();
-  }, [url, needsText, streamsText, revision, props.sizeBytes, props.file, refresh]);
+  }, [url, needsText, streamsText, revision, props.sizeBytes, props.file, props.asset, refresh]);
   const failure = error ?? (needsText ? contentError : null);
   const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);

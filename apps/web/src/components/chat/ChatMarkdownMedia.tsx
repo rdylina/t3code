@@ -154,11 +154,12 @@ export function ChatMarkdownImageFallback(props: {
   const readiness = use(GeneratedImageSettledContext);
   const path =
     props.originalPath === undefined ? null : normalizeProjectPathForComparison(props.originalPath);
-  const onSettled = path !== null && readiness?.paths.has(path) ? readiness.onSettled : null;
+  const generationIds = path !== null ? readiness?.idsByPath.get(path) : undefined;
+  const onSettled = readiness?.onSettled;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- settle the generation after its unavailable-image fallback commits
   useEffect(() => {
-    if (path !== null) onSettled?.(path);
-  }, [path, onSettled]);
+    if (generationIds) onSettled?.(generationIds);
+  }, [generationIds, onSettled]);
   const content = (
     <span
       data-markdown-copy={props.copyMarkdown}
@@ -216,22 +217,22 @@ export function ChatMarkdownImage(props: {
   const reference = props.actionsSource.reference;
   const imagePath =
     reference?.kind === "file" ? normalizeProjectPathForComparison(reference.path) : null;
-  const onGeneratedImageSettled =
-    imagePath !== null && generationReadiness?.paths.has(imagePath)
-      ? generationReadiness.onSettled
-      : null;
+  const generationIds =
+    imagePath !== null ? generationReadiness?.idsByPath.get(imagePath) : undefined;
+  const onGeneratedImageSettled = generationReadiness?.onSettled;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hand off a live generation only after the visible image decodes or its failure commits
   useEffect(() => {
-    if (!onGeneratedImageSettled || imagePath === null) return;
+    if (!onGeneratedImageSettled || !generationIds) return;
     if (failed) {
-      onGeneratedImageSettled(imagePath);
+      onGeneratedImageSettled(generationIds);
       return;
     }
-    if (!settled || loadedSrc === null || imageRef.current === null) return;
+    if (!settled || loadedSrc === null || loadedSrc !== props.src || imageRef.current === null)
+      return;
     let cancelled = false;
     void imageRef.current.decode().then(
       () => {
-        if (!cancelled) onGeneratedImageSettled(imagePath);
+        if (!cancelled) onGeneratedImageSettled(generationIds);
       },
       () => {
         if (cancelled) return;
@@ -242,7 +243,7 @@ export function ChatMarkdownImage(props: {
     return () => {
       cancelled = true;
     };
-  }, [onGeneratedImageSettled, imagePath, failed, settled, loadedSrc, src]);
+  }, [onGeneratedImageSettled, generationIds, failed, settled, loadedSrc, src, props.src]);
   // Cached images are complete before `onLoad` can fire.
   const markLoadedIfComplete = (image: HTMLImageElement | null) => {
     imageRef.current = image;
@@ -458,13 +459,25 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   const resource = props.resource;
   const threadWorkspaceMutationId = use(WorkspaceMutationIdContext);
   const workspaceMutationId = props.workspaceMutationId ?? threadWorkspaceMutationId;
+  const readiness = use(GeneratedImageSettledContext);
+  const path =
+    resource._tag === "media-file"
+      ? resource.path
+      : resource._tag === "workspace-file" && props.workspaceRoot
+        ? `${props.workspaceRoot}/${resource.path}`
+        : null;
+  const generationIds =
+    path !== null ? readiness?.idsByPath.get(normalizeProjectPathForComparison(path)) : undefined;
+  const revision = generationIds
+    ? JSON.stringify([workspaceMutationId, generationIds])
+    : workspaceMutationId;
   const assetUrl = useAssetUrlState(
     props.environmentId,
     resource,
-    workspaceMutationId !== undefined &&
+    revision !== undefined &&
       props.kind !== "video" &&
       (resource._tag === "media-file" || resource._tag === "workspace-file")
-      ? workspaceMutationId
+      ? revision
       : undefined,
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);

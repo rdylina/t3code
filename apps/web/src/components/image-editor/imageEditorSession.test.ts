@@ -1,3 +1,4 @@
+import { imageEditorSvgMarkup } from "./imageEditorDocument";
 import { Schema } from "effect";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -192,6 +193,27 @@ it("restores stroke families and legacy text without word spacing while rejectin
       { x: 25, y: 15 },
     ],
   });
+  const arrow = {
+    ...objects[3]!,
+    x: 20,
+    y: 30,
+    width: 100,
+    height: 1,
+    points: [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+    ],
+  };
+  const arrowDoc = { ...persisted.document, objects: [arrow] };
+  const smaller = imageEditorDocumentForAttachment(arrowDoc, { width: 150, height: 100 });
+  expect(imageEditorSvgMarkup(smaller)).toContain("M44.597 2.61 L50 0 L44.597 -2.61");
+  const restoredArrow = decodeSession({ ...persisted, document: smaller });
+  expect(imageEditorSvgMarkup(restoredArrow.document)).toBe(imageEditorSvgMarkup(smaller));
+  const sameSize = imageEditorDocumentForAttachment(
+    { ...arrowDoc, crop: null },
+    { width: 400, height: 300 },
+  );
+  expect(imageEditorSvgMarkup(sameSize)).toBe(imageEditorSvgMarkup({ ...arrowDoc, crop: null }));
   for (const points of [[], [{ x: Infinity, y: 0 }], [{ x: 0, y: NaN }]]) {
     expect(() =>
       decodeSession({

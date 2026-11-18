@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type ComponentProps,
   type KeyboardEvent,
 } from "react";
 import { flushSync } from "react-dom";
@@ -62,6 +63,20 @@ import { toastManager } from "../ui/toast";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { resolveThreadOverlayKey } from "~/threadRoutes";
 import { cn } from "~/lib/utils";
+
+function ImagePreviewToolbarButton({
+  iconOnly = false,
+  ...props
+}: Omit<ComponentProps<typeof Button>, "size" | "variant"> & { iconOnly?: boolean }) {
+  return (
+    <Button
+      {...props}
+      variant="media-close"
+      size={iconOnly ? "toolbar-icon" : "toolbar"}
+      className="max-w-full"
+    />
+  );
+}
 
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
@@ -572,11 +587,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                 <div className="flex h-9 items-center gap-2">
                   <div className="flex min-w-0 flex-1 items-center gap-2">
                     {galleryPreviewIndex !== null && (
-                      <Button
+                      <ImagePreviewToolbarButton
                         type="button"
-                        size="sm"
-                        variant="media-close"
-                        className="max-w-full max-sm:size-9 @max-[24rem]/media-toolbar:size-9"
                         onClick={backFromPreview}
                         aria-label={gt("Back, return to image gallery")}
                       >
@@ -584,13 +596,10 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                         <span className="max-sm:sr-only @max-[24rem]/media-toolbar:sr-only">
                           <T>Back</T>
                         </span>
-                      </Button>
+                      </ImagePreviewToolbarButton>
                     )}
                     {item.type !== "video" && (
-                      <Button
-                        size="sm"
-                        variant="media-close"
-                        className="max-w-full max-sm:size-9 @max-[24rem]/media-toolbar:size-9"
+                      <ImagePreviewToolbarButton
                         aria-label={gt("Edit image")}
                         disabled={loading}
                         onClick={() => {
@@ -601,12 +610,9 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                         <span className="max-sm:sr-only @max-[24rem]/media-toolbar:sr-only">
                           <T>Edit image</T>
                         </span>
-                      </Button>
+                      </ImagePreviewToolbarButton>
                     )}
-                    <Button
-                      size="sm"
-                      variant="media-close"
-                      className="max-w-full max-sm:size-9 @max-[24rem]/media-toolbar:size-9"
+                    <ImagePreviewToolbarButton
                       aria-label={onLoadGallery ? gt("All images") : gt("Gallery")}
                       disabled={loading}
                       onClick={() => {
@@ -617,20 +623,18 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                       <span className="max-sm:sr-only @max-[24rem]/media-toolbar:sr-only">
                         {onLoadGallery ? gt("All images") : gt("Gallery")}
                       </span>
-                    </Button>
+                    </ImagePreviewToolbarButton>
                   </div>
-                  <Button
+                  <ImagePreviewToolbarButton
                     type="button"
                     ref={closeButtonRef}
-                    size="icon"
-                    variant="media-close"
-                    className="@max-[24rem]/media-toolbar:size-9"
+                    iconOnly
                     onClick={close}
                     aria-label={isVideo ? gt("Close video preview") : gt("Close image preview")}
                     title={isVideo ? gt("Close video preview") : gt("Close image preview")}
                   >
                     <XIcon aria-hidden />
-                  </Button>
+                  </ImagePreviewToolbarButton>
                 </div>
               </div>
               {editorError && (

@@ -2440,9 +2440,10 @@ describe("deriveMessagesTimelineRows", () => {
     const input = (
       tools: ReadonlyArray<ReturnType<typeof tool>>,
       options: {
+        readonly finalText?: string;
         readonly runSettled?: boolean;
         readonly runStatus?: "running" | "completed" | "failed" | "interrupted";
-        readonly settledImagePaths?: ReadonlySet<string>;
+        readonly settledImageIds?: ReadonlySet<string>;
         readonly followUp?: boolean;
         readonly isWorking?: boolean;
         readonly toolCallVisibility?: "hideAll" | "zen";
@@ -2461,6 +2462,18 @@ describe("deriveMessagesTimelineRows", () => {
       const items = [
         prompt("prompt", 0),
         ...tools,
+        ...(options.runSettled
+          ? [
+              {
+                ...tool("reply", 8, "reply", "completed"),
+                type: "assistant_message" as const,
+                messageId: MessageId.make("reply"),
+                text: options.finalText ?? "![A](/generated/a.png) ![B](/generated/b.png)",
+                attachments: [],
+                streaming: false,
+              },
+            ]
+          : []),
         ...(options.followUp ? [prompt("next", 9)] : []),
       ];
       return {
@@ -2484,7 +2497,7 @@ describe("deriveMessagesTimelineRows", () => {
         isWorking: options.isWorking ?? !options.runSettled,
         activeTurnStartedAt: options.runSettled ? null : DateTime.formatIso(at),
         ...(options.toolCallVisibility ? { toolCallVisibility: options.toolCallVisibility } : {}),
-        settledImagePaths: options.settledImagePaths ?? new Set<string>(),
+        settledImageIds: options.settledImageIds ?? new Set<string>(),
         turnDiffSummaries: [],
         supportsConversationRollback: false,
       } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
@@ -2539,7 +2552,7 @@ describe("deriveMessagesTimelineRows", () => {
     const firstReady = deriveMessagesTimelineRowsWithState(
       input(completed, {
         runSettled: true,
-        settledImagePaths: new Set(["/generated/a.png"]),
+        settledImageIds: new Set(["a"]),
       }),
       settledRun,
     );
@@ -2547,7 +2560,7 @@ describe("deriveMessagesTimelineRows", () => {
     const allReady = deriveMessagesTimelineRowsWithState(
       input(completed, {
         runSettled: true,
-        settledImagePaths: new Set(["/generated/a.png", "/generated/b.png"]),
+        settledImageIds: new Set(["a", "b"]),
       }),
       firstReady,
     );
@@ -2557,6 +2570,31 @@ describe("deriveMessagesTimelineRows", () => {
         deriveMessagesTimelineRowsWithState(input(completed, { runSettled: true }), allReady).rows,
       ),
     ).toBeNull();
+    for (const finalText of ["Saved the result.", "[Download](/generated/a.png)"]) {
+      expect(
+        placeholderIds(
+          deriveMessagesTimelineRowsWithState(
+            input(completed, { runSettled: true, finalText }),
+            initial,
+          ).rows,
+        ),
+      ).toBeNull();
+    }
+    const rewrite = {
+      ...image("b", "completed"),
+      output: { status: "completed", savedPath: "/generated/a.png" },
+    };
+    expect(
+      placeholderIds(
+        deriveMessagesTimelineRowsWithState(
+          input([completed[0]!, rewrite], {
+            settledImageIds: new Set(["a"]),
+            runSettled: true,
+          }),
+          initial,
+        ).rows,
+      ),
+    ).toEqual(["b"]);
     // Opening history has no observed live generation to retain.
     expect(placeholderIds(deriveMessagesTimelineRowsWithState(input(completed)).rows)).toBeNull();
     expect(

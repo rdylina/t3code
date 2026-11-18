@@ -1,3 +1,6 @@
+import { chatMarkdownImageSources } from "@t3tools/shared/markdownPipeline";
+import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as DateTime from "effect/DateTime";
 import { msg } from "gt-react";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
@@ -743,23 +746,38 @@ function imageGenerationRows(
   entries: ReadonlyArray<TimelineEntry>,
   runIsUnsettled: (runId: RunId | null) => boolean,
   retainedItemIds: ReadonlySet<string>,
-  settledImagePaths: ReadonlySet<string>,
+  settledImageIds: ReadonlySet<string>,
   completedRunId: RunId | null,
+  workspaceRoot?: string,
 ): Array<Extract<MessagesTimelineRow, { kind: "image-generation" }>> {
-  const generating = entries
-    .slice(lastResponseBoundaryIndex(entries) + 1)
-    .filter((entry): entry is Extract<TimelineEntry, { kind: "work" }> => {
-      if (entry.kind !== "work") return false;
-      const unsettled = runIsUnsettled(entry.entry.runId ?? null);
-      if (workEntryIsGeneratingImage(entry.entry) && unsettled) return true;
-      const path = workEntryGeneratedImagePath(entry.entry);
-      return (
-        retainedItemIds.has(entry.id) &&
-        (unsettled || (completedRunId !== null && entry.entry.runId === completedRunId)) &&
-        path !== null &&
-        !settledImagePaths.has(path)
-      );
-    });
+  const response = entries.slice(lastResponseBoundaryIndex(entries) + 1);
+  const renderedPaths = new Set(
+    response.flatMap((entry) => {
+      if (completedRunId === null || entry.kind !== "message" || entry.message.role !== "assistant")
+        return [];
+      return chatMarkdownImageSources(entry.message.text).flatMap((source) => {
+        const image = classifyMarkdownImageSource(source, workspaceRoot);
+        return image._tag === "WorkspaceFile"
+          ? [normalizeProjectPathForComparison(image.path)]
+          : [];
+      });
+    }),
+  );
+  const generating = response.filter((entry): entry is Extract<TimelineEntry, { kind: "work" }> => {
+    if (entry.kind !== "work") return false;
+    const unsettled = runIsUnsettled(entry.entry.runId ?? null);
+    if (workEntryIsGeneratingImage(entry.entry) && unsettled) return true;
+    const path = workEntryGeneratedImagePath(entry.entry);
+    return (
+      retainedItemIds.has(entry.id) &&
+      path !== null &&
+      (unsettled ||
+        (completedRunId !== null &&
+          entry.entry.runId === completedRunId &&
+          renderedPaths.has(path))) &&
+      !settledImageIds.has(entry.id)
+    );
+  });
   const first = generating[0];
   return first === undefined
     ? []
@@ -1659,7 +1677,8 @@ export function deriveMessagesTimelineRows(
     worktreeSetup?: WorktreeSetupSnapshot | null;
     toolCallVisibility?: ToolCallVisibility;
     revealedMessageId?: MessageId | null;
-    settledImagePaths?: ReadonlySet<string>;
+    settledImageIds?: ReadonlySet<string>;
+    imageWorkspaceRoot?: string | undefined;
   },
   resolve: MessageResolver = m,
   retainedImageGenerationItemIds: ReadonlySet<string> = new Set(),
@@ -2461,8 +2480,9 @@ export function deriveMessagesTimelineRows(
       input.timelineEntries,
       (runId) => (runId === null ? runlessWorkActive : runId === unsettledRunId),
       retainedImageGenerationItemIds,
-      input.settledImagePaths ?? new Set(),
+      input.settledImageIds ?? new Set(),
       input.latestRun?.status === "completed" ? input.latestRun.runId : null,
+      input.imageWorkspaceRoot,
     ),
   ];
   return result.map((row, index) => {

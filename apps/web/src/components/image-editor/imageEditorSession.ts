@@ -34,6 +34,7 @@ const EditorObject = Schema.Union([
     ...ObjectFields,
     kind: Schema.Literals(["freehand", "remove", "arrow"]),
     points: Schema.Array(Point).check(Schema.isMinLength(1)),
+    arrowheadMinLength: Schema.optionalKey(Positive),
   }),
   Schema.Struct({ ...ObjectFields, kind: Schema.Literals(["rectangle", "ellipse"]) }),
   Schema.Struct({
@@ -130,6 +131,9 @@ export function imageEditorDocumentForAttachment(
           width: object.width * scaleX,
           height: object.height * scaleY,
           strokeWidth: object.strokeWidth * Math.min(scaleX, scaleY),
+          ...(object.kind === "arrow"
+            ? { arrowheadMinLength: (object.arrowheadMinLength ?? 12) * Math.min(scaleX, scaleY) }
+            : {}),
         }).objects[0]!,
     ),
   };

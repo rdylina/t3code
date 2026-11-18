@@ -116,6 +116,63 @@ describe("image editor documents", () => {
     expect(bounds.height).toBeCloseTo(100);
   });
 
+  it.each([
+    { kind: "arrow" as const, point: { x: 64, y: 17 }, hit: true },
+    { kind: "arrow" as const, point: { x: 50, y: 35 }, hit: false },
+    { kind: "ellipse" as const, point: { x: 506, y: 10 }, hit: true },
+    { kind: "ellipse" as const, point: { x: 550, y: 10 }, hit: false },
+    { kind: "ellipse" as const, point: { x: 250, y: 26 }, hit: true },
+    { kind: "ellipse" as const, point: { x: 250, y: 40 }, hit: false },
+  ])("hit-tests $kind at $point in image pixels ($hit)", ({ kind, point, hit }) => {
+    const object = stroke({
+      kind,
+      x: 0,
+      y: 0,
+      width: kind === "ellipse" ? 500 : 100,
+      height: kind === "ellipse" ? 20 : 1,
+      points: [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+      ],
+    });
+    const doc = addImageEditorObject(createImageEditorDocument(800, 600), object);
+    expect(hitTestImageEditorObject(doc, point) !== null).toBe(hit);
+  });
+
+  it.each([
+    { x: 0, y: 0, rotation: 0, width: 40, height: 40, visible: false },
+    { x: 0, y: 100, rotation: 0, width: 200, height: 1, visible: true },
+    { x: 0, y: 95, rotation: 0, width: 200, height: 1, visible: false },
+    { x: 0, y: 97, rotation: 0, width: 200, height: 1, visible: true },
+    { x: 0, y: 80, rotation: 90, width: 200, height: 1, visible: true },
+  ])(
+    "only requests removal for strokes intersecting the crop: $x,$y,$rotation",
+    ({ visible, ...box }) => {
+      const doc = setImageEditorCrop(
+        addImageEditorObject(
+          createImageEditorDocument(400, 300),
+          stroke({
+            ...box,
+            kind: "remove",
+            strokeWidth: 8,
+            points: [
+              { x: 0, y: 0 },
+              { x: box.width, y: box.height },
+            ],
+          }),
+        ),
+        { x: 90, y: 100, width: 100, height: 100 },
+      );
+      expect(
+        buildImageEditorPrompt(doc, {
+          instructions: "",
+          removeBackground: false,
+          aspectRatio: "original",
+        }).includes("attached mask"),
+      ).toBe(visible);
+    },
+  );
+
   it("keeps a six-display-pixel target around thin annotations on large fitted images", () => {
     const document = addImageEditorObject(
       createImageEditorDocument(4000, 3000),
@@ -172,7 +229,7 @@ describe("image editor documents", () => {
       rotation: 0,
       color: "#ffffff",
       strokeWidth: 1,
-      text: '<script>&"',
+      text: '<script>&"\u000c\u0000\ud800\ufffe\t😀漢字',
       fontFamily: 'a" onload="bad',
       fontSize: 20,
       align: "left",
@@ -194,6 +251,8 @@ describe("image editor documents", () => {
     expect(markup).toContain("&lt;script&gt;&amp;&quot;");
     expect(markup).toContain("a&quot; onload=&quot;bad");
     expect(markup).not.toContain("<script>");
+    expect(markup).not.toMatch(/[\u0000\u000c\ud800\ufffe]/u);
+    expect(markup).toContain("\t😀漢字");
     const curved = updateImageEditorObject(document, "text", { curve: 20, stretch: 2 });
     expect(imageEditorSvgMarkup(curved)).toContain('transform="scale(2 1)"');
     expect(imageEditorSvgMarkup(curved)).toContain("Q100 4 180 44");

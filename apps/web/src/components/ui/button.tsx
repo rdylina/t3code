@@ -34,6 +34,8 @@ const buttonVariants = cva(
         multiline:
           "min-h-9 px-[calc(--spacing(3)-1px)] py-[calc(--spacing(1.5)-1px)] whitespace-normal sm:min-h-8",
         sm: "h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] sm:h-7",
+        toolbar: "h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] sm:h-7 max-sm:size-9 @max-sm:size-9",
+        "toolbar-icon": "size-9 sm:size-8 @max-sm:size-9",
         "sm-pill": "h-8 gap-1.5 rounded-full px-2.5 sm:h-7",
         "sm-multiline":
           "min-h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)] whitespace-normal sm:min-h-7",

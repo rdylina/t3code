@@ -133,6 +133,14 @@ describe("ExpandedImageDialog", () => {
     });
     await vi.waitFor(() => expect(positioner.hasAttribute("data-anchor-hidden")).toBe(true));
     await expect.element(comment).toHaveFocus();
+    await expect.element(comment).toBeVisible();
+    const popup = comment.element().closest('[data-slot="popover-popup"]')!;
+    await vi.waitFor(() => {
+      const bounds = popup.getBoundingClientRect();
+      const viewport = scroller.getBoundingClientRect();
+      expect(bounds.top).toBeGreaterThanOrEqual(viewport.top);
+      expect(bounds.bottom).toBeLessThanOrEqual(viewport.bottom);
+    });
     await userEvent.keyboard("{Escape}");
     await expect.element(comment).not.toBeInTheDocument();
     await expect.element(canvas).toBeVisible();
@@ -774,6 +782,14 @@ describe("ExpandedImageDialog", () => {
         const image = element.querySelector("img")!;
         const bounds = element.getBoundingClientRect();
         expect(image.naturalHeight).toBeGreaterThan(0);
+        expect(available.width).toBeGreaterThan(100);
+        expect(available.height).toBeGreaterThan(100);
+        expect(bounds.width).toBeGreaterThan(100);
+        expect(bounds.height).toBeGreaterThan(100);
+        expect(bounds.height).toBeCloseTo(
+          (bounds.width * image.naturalHeight) / image.naturalWidth,
+          0,
+        );
         expect(bounds.width).toBeCloseTo(
           Math.min(available.width, available.height * (image.naturalWidth / image.naturalHeight)),
           0,

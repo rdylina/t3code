@@ -47,8 +47,11 @@ function archiveName(name: string, index: number, used: Set<string>): string {
     .split(/[\\/]/)
     .at(-1)
     ?.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, "_")
-    .trim();
-  const safe = !base || base === "." || base === ".." ? `image-${index + 1}` : base;
+    .trim()
+    .replace(/[. ]+$/, "");
+  const normalized = base?.replace(/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?=\.|$)/i, "_$&");
+  const safe =
+    !normalized || normalized === "." || normalized === ".." ? `image-${index + 1}` : normalized;
   const extensionIndex = safe.lastIndexOf(".");
   const stem = extensionIndex > 0 ? safe.slice(0, extensionIndex) : safe;
   const extension = extensionIndex > 0 ? safe.slice(extensionIndex) : "";

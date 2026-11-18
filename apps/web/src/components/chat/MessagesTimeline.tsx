@@ -34,7 +34,6 @@ const EMPTY_RESPONDING_REQUEST_IDS: TimelineRowSharedState["respondingRequestIds
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
-import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import {
   memo,
@@ -746,17 +745,16 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const imageResponseKey = `${listIdentityKey}\0${timelineEntries.findLast(timelineEntryStartsResponse)?.id ?? ""}`;
   const [settledImages, setSettledImages] = useState(() => ({
     key: imageResponseKey,
-    paths: new Set<string>(),
+    ids: new Set<string>(),
   }));
   if (settledImages.key !== imageResponseKey) {
-    setSettledImages({ key: imageResponseKey, paths: new Set() });
+    setSettledImages({ key: imageResponseKey, ids: new Set() });
   }
-  const onGeneratedImageSettled = (path: string) => {
-    const normalized = normalizeProjectPathForComparison(path);
+  const onGeneratedImageSettled = (ids: readonly string[]) => {
     setSettledImages((current) =>
-      current.key !== imageResponseKey || current.paths.has(normalized)
+      current.key !== imageResponseKey || ids.every((id) => current.ids.has(id))
         ? current
-        : { key: imageResponseKey, paths: new Set(current.paths).add(normalized) },
+        : { key: imageResponseKey, ids: new Set([...current.ids, ...ids]) },
     );
   };
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
@@ -777,17 +775,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
     worktreeSetup,
     toolCallVisibility,
     revealedMessageId,
-    settledImagePaths: settledImages.paths,
+    settledImageIds: settledImages.ids,
+    imageWorkspaceRoot: markdownCwd,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
-  const pendingGenerationIds = new Set(
-    rawRows.flatMap((row) => (row.kind === "image-generation" ? row.itemIds : [])),
-  );
-  const pendingImagePaths = new Set<string>();
-  for (const entry of pendingGenerationIds.size > 0 ? timelineEntries : []) {
-    if (entry.kind !== "work" || !pendingGenerationIds.has(entry.id)) continue;
+  const imageGenerationIds = new Map<string, string[]>();
+  for (const entry of timelineEntries) {
+    if (timelineEntryStartsResponse(entry)) imageGenerationIds.clear();
+    if (entry.kind !== "work") continue;
     const path = workEntryGeneratedImagePath(entry.entry);
-    if (path !== null) pendingImagePaths.add(path);
+    if (path !== null)
+      imageGenerationIds.set(path, [...(imageGenerationIds.get(path) ?? []), entry.id]);
   }
   const matchedApprovalRequestIds = new Set<string>();
   for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
@@ -1153,8 +1151,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     findActive,
     onImageExpand,
     generatedImageReadiness:
-      pendingImagePaths.size > 0
-        ? { paths: pendingImagePaths, onSettled: onGeneratedImageSettled }
+      imageGenerationIds.size > 0
+        ? { idsByPath: imageGenerationIds, onSettled: onGeneratedImageSettled }
         : undefined,
     onFileOpen,
     onUseArtifactTemplate,

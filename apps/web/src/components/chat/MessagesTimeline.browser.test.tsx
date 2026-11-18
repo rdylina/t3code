@@ -166,6 +166,8 @@ function work(id: string, entry: Record<string, unknown>): Entry {
 
 it.each([
   "decoded",
+  "relative path",
+  "rewritten",
   "load failure",
   "decode failure",
   "Windows path",
@@ -185,11 +187,13 @@ it.each([
       ? "c:/images/generated.png"
       : result === "UNC path" || result === "blocked path"
         ? "file://host/images/generated.png"
-        : savedPath;
+        : result === "relative path"
+          ? "./generated.png"
+          : savedPath;
   const fails =
     result === "load failure" || result === "decode failure" || result === "blocked path";
-  const generation = (status: "running" | "completed"): Entry =>
-    work("generation", {
+  const generation = (status: "running" | "completed", id = "generation"): Entry =>
+    work(id, {
       runId,
       label: "Generate image",
       tone: "tool",
@@ -205,7 +209,7 @@ it.each([
     <div style={{ height: 700 }}>
       <MessagesTimeline
         {...props}
-        markdownCwd={result === "UNC path" ? "\\\\host\\images" : undefined}
+        markdownCwd={result === "UNC path" ? "\\\\host\\images" : "/"}
         timelineEntries={entries}
         isWorking={!completed}
         latestRun={{
@@ -227,8 +231,8 @@ it.each([
   const decoded = new Promise<void>((resolve, reject) => {
     settleDecode = (fails) => (fails ? reject(new Error("Invalid image")) : resolve());
   });
-  using _decode = vi.spyOn(HTMLImageElement.prototype, "decode").mockReturnValue(decoded);
   await using screen = await render(view([generation("running")]));
+  using _decode = vi.spyOn(HTMLImageElement.prototype, "decode").mockReturnValue(decoded);
   await expect.element(screen.getByRole("img", { name: "Generating image…" })).toBeVisible();
 
   await screen.rerender(view([generation("completed")]));
@@ -262,6 +266,28 @@ it.each([
   await expect
     .element(screen.getByRole("img", { name: "Generating image…" }))
     .not.toBeInTheDocument();
+  if (result === "rewritten") {
+    const reply = message(`![Generated](${markdownPath})`, { role: "assistant", runId });
+    await screen.rerender(view([generation("completed"), reply, generation("running", "rewrite")]));
+    await expect.element(screen.getByRole("img", { name: "Generating image…" })).toBeVisible();
+    let finishRewrite!: () => void;
+    const rewritten = new Promise<void>((resolve) => {
+      finishRewrite = resolve;
+    });
+    _decode.mockReturnValue(rewritten);
+    stubbedAsset.url += "#rewritten";
+    await screen.rerender(
+      view([generation("completed"), generation("completed", "rewrite"), reply], true),
+    );
+    await expect
+      .element(screen.getByRole("button", { name: "Preview Generated", exact: true }))
+      .toHaveAttribute("src", stubbedAsset.url);
+    await expect.element(screen.getByRole("img", { name: "Generating image…" })).toBeVisible();
+    await act(() => finishRewrite());
+    await expect
+      .element(screen.getByRole("img", { name: "Generating image…" }))
+      .not.toBeInTheDocument();
+  }
 });
 
 function v2Item(type: string, fields: Record<string, unknown>) {

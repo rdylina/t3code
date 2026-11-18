@@ -6,6 +6,13 @@ import { observeResize } from "../lib/observeResize";
 export function useElementMinWidth(element: HTMLElement | null, minWidth: number): boolean {
   const subscribe = (callback: () => void) =>
     element ? observeResize(element, callback) : () => {};
-  const getSnapshot = () => element !== null && element.clientWidth >= minWidth;
+  const getSnapshot = () => {
+    if (!element) return false;
+    const style = getComputedStyle(element);
+    return (
+      element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) >=
+      minWidth
+    );
+  };
   return useSyncExternalStore(subscribe, getSnapshot, () => false);
 }

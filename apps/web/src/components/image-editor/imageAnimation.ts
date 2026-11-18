@@ -97,7 +97,12 @@ export async function createAnimationFrameSheet(
         const durationMs = (image.duration ?? 0) / 1000;
         context.fillStyle = "#111111";
         context.fillText(
-          `Frame ${index + 1} · ${Math.round(durationMs)} ms`,
+          m(
+            msg("Frame {number} · {duration} ms", {
+              number: index + 1,
+              duration: Math.round(durationMs),
+            }),
+          ),
           (index % columns) * tileWidth + 8,
           y - 12,
         );

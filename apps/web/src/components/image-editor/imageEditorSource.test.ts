@@ -103,8 +103,8 @@ describe("edited screenshot metadata", () => {
       accessibility: { format: "flat-text", text: "Text removed by crop", truncated: false },
     };
     const flatEdited = editedImageSource(flat, document);
-    expect(flatEdited?.accessibility).toBeUndefined();
-    expect(flatEdited?.accessibleText).toBeUndefined();
+    const { accessibility: _tree, accessibleText: _text, ...metadata } = flat;
+    expect(flatEdited).toEqual(metadata);
     expect(editedImageSource(flat, createImageEditorDocument(1000, 500))).toBe(flat);
   });
 });

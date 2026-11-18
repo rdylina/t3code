@@ -1,3 +1,4 @@
+import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 import { m } from "../i18n/messages";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useGT, useMessages } from "gt-react";
@@ -3149,6 +3150,13 @@ export default function ChatView(props: ChatViewProps) {
   const applyImageEditStable = useStableCallback(applyImageEdit);
   const applyImageBatch = async (items: ExpandedImageItem[], prompt: string) => {
     assertImageEditThread();
+    if (items.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS)
+      throw new Error(
+        gt(
+          "A message can contain up to {value0} attachments. Remove some before adding these edits.",
+          { value0: PROVIDER_SEND_TURN_MAX_ATTACHMENTS },
+        ),
+      );
     const files: File[] = [];
     for (const item of items) {
       const url = await readImageUrl(
@@ -3197,7 +3205,9 @@ export default function ChatView(props: ChatViewProps) {
     const messages = rows.flatMap(({ item }) =>
       item.type === "user_message" || item.type === "assistant_message"
         ? [{ text: item.text, attachments: item.attachments }]
-        : [],
+        : item.type === "proposed_plan"
+          ? [{ text: item.markdown, attachments: [] }]
+          : [],
     );
     const sources = conversationImageSources(
       [...messages, ...timelineMessages],

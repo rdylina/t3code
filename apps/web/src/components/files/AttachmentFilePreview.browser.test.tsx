@@ -1362,6 +1362,20 @@ it("copies every indexed line rather than the mounted preview rows", async () =>
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
+it("loads a source-only text preview without attachment authorization", async () => {
+  refresh.mockReset().mockResolvedValue(null);
+  await using screen = await render(
+    <AttachmentFilePreview
+      name="note.md"
+      mimeType="text/markdown"
+      sizeBytes={12}
+      src="data:text/plain,Source%20preview"
+    />,
+  );
+  await expect.element(screen.getByText("Source preview", { exact: true })).toBeVisible();
+  expect(refresh).not.toHaveBeenCalled();
+});
+
 it.each([
   ["one.csv", "text/csv", "name\nAda\n", "1 row · 1 column ·"],
   ["two.csv", "text/csv", "name,count\nAda,1\nGrace,2\n", "2 rows · 2 columns ·"],

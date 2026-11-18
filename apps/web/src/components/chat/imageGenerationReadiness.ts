@@ -1,8 +1,8 @@
 import { createContext } from "react";
 
 export interface GeneratedImageReadiness {
-  readonly paths: ReadonlySet<string>;
-  readonly onSettled: (path: string) => void;
+  readonly idsByPath: ReadonlyMap<string, readonly string[]>;
+  readonly onSettled: (ids: readonly string[]) => void;
 }
 
 export const GeneratedImageSettledContext = createContext<GeneratedImageReadiness | null>(null);
